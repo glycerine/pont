@@ -1016,7 +1016,13 @@ func pcvalue(f funcInfo, off uint32, targetpc uintptr, strict bool) (int32, uint
 	const debugCheckCache = false
 
 	// If true, skip checking the cache entirely.
-	const skipCache = false
+	//jea was:
+	//const skipCache = false
+	//jea new:
+	skipCache := false
+	if simulationMode {
+		skipCache = true
+	}
 
 	if off == 0 {
 		return -1, 0

@@ -215,10 +215,11 @@ var predeclaredFuncs = [...]struct {
 	_Close:   {"close", 1, false, statement},
 	_Complex: {"complex", 2, false, expression},
 	_Copy:    {"copy", 2, false, statement},
-	_Delete:  {"delete", 2, false, statement},
-	_Imag:    {"imag", 1, false, expression},
-	_Len:     {"len", 1, false, expression},
-	_Make:    {"make", 1, true, expression},
+	// variadic delete: 2 for map, 1 for channel.
+	_Delete: {"delete", 1, true, statement},
+	_Imag:   {"imag", 1, false, expression},
+	_Len:    {"len", 1, false, expression},
+	_Make:   {"make", 1, true, expression},
 	// To disable max/min, remove the next two lines.
 	_Max:     {"max", 1, true, expression},
 	_Min:     {"min", 1, true, expression},

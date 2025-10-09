@@ -20,13 +20,16 @@ const (
 
 	// operators and operations
 	// _Operator is excluding '*' (_Star)
-	_Operator // op
-	_AssignOp // op=
-	_IncOp    // opop
-	_Assign   // =
-	_Define   // :=
-	_Arrow    // <-
-	_Star     // *
+	_Operator    // op
+	_AssignOp    // op=
+	_IncOp       // opop
+	_Assign      // =
+	_Define      // :=
+	_Arrow       // <-
+	_Star        // *
+	_StickyArrow // <$
+	_PipeArrow   // <|
+	_FinalArrow  // <#
 
 	// delimiters
 	_Lparen    // (
@@ -146,6 +149,11 @@ const (
 	AndNot // &^
 	Shl    // <<
 	Shr    // >>
+
+	// sticky receive/send
+	RecvSticky // <$
+	// pipe receive
+	RecvPipe // <|
 )
 
 // Operator precedences

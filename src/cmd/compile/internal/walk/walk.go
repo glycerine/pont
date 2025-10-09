@@ -61,7 +61,17 @@ func walkRecv(n *ir.UnaryExpr) ir.Node {
 	init := ir.TakeInit(n)
 
 	n.X = walkExpr(n.X, &init)
-	call := walkExpr(mkcall1(chanfn("chanrecv1", 2, n.X.Type()), nil, &init, n.X, typecheck.NodNil()), &init)
+
+	var fn ir.Node
+	switch n.Op() {
+	case ir.ORECV_PIPE:
+		fn = chanfn("chanrecv1pipe", 2, n.X.Type())
+	case ir.ORECV_STICKY:
+		fn = chanfn("chanrecv1sticky", 2, n.X.Type())
+	default:
+		fn = chanfn("chanrecv1", 2, n.X.Type())
+	}
+	call := walkExpr(mkcall1(fn, nil, &init, n.X, typecheck.NodNil()), &init)
 	return ir.InitExpr(init, call)
 }
 

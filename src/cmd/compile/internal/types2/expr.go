@@ -147,7 +147,7 @@ func (check *Checker) unary(x *operand, e *syntax.Operation) {
 		x.typ = &Pointer{base: x.typ}
 		return
 
-	case syntax.Recv:
+	case syntax.Recv, syntax.RecvSticky, syntax.RecvPipe:
 		if elem := check.chanElem(x, x, true); elem != nil {
 			x.mode = commaok
 			x.typ = elem
@@ -1217,7 +1217,8 @@ func (check *Checker) exprInternal(T *target, x *operand, e syntax.Expr, hint Ty
 			if x.mode == invalid {
 				goto Error
 			}
-			if e.Op == syntax.Recv {
+			switch e.Op {
+			case syntax.Recv, syntax.RecvSticky, syntax.RecvPipe:
 				x.expr = e
 				return statement // receive operations may appear in statement context
 			}
@@ -1429,9 +1430,11 @@ func (check *Checker) singleValue(x *operand) {
 
 // op2tok translates syntax.Operators into token.Tokens.
 var op2tok = [...]token.Token{
-	syntax.Def:  token.ILLEGAL,
-	syntax.Not:  token.NOT,
-	syntax.Recv: token.ILLEGAL,
+	syntax.Def:        token.ILLEGAL,
+	syntax.Not:        token.NOT,
+	syntax.Recv:       token.ILLEGAL,
+	syntax.RecvSticky: token.ILLEGAL,
+	syntax.RecvPipe:   token.ILLEGAL,
 
 	syntax.OrOr:   token.LOR,
 	syntax.AndAnd: token.LAND,

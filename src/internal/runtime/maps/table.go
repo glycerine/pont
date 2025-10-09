@@ -691,8 +691,13 @@ func (it *Iter) Init(typ *abi.MapType, m *Map) {
 	}
 
 	it.m = m
-	it.entryOffset = rand()
-	it.dirOffset = rand()
+	if simulationMode {
+		it.entryOffset = 0
+		it.dirOffset = 0
+	} else {
+		it.entryOffset = rand()
+		it.dirOffset = rand()
+	}
 	it.globalDepth = m.globalDepth
 	it.dirIdx = dirIdx
 	it.group = groupSmall

@@ -37,6 +37,8 @@ func walkStmt(n ir.Node) ir.Node {
 		ir.OAS2,
 		ir.OAS2DOTTYPE,
 		ir.OAS2RECV,
+		ir.OAS2RECV_STICKY,
+		ir.OAS2RECV_PIPE,
 		ir.OAS2FUNC,
 		ir.OAS2MAPR,
 		ir.OCLEAR,
@@ -47,6 +49,8 @@ func walkStmt(n ir.Node) ir.Node {
 		ir.OCALLFUNC,
 		ir.ODELETE,
 		ir.OSEND,
+		ir.OSEND_FINAL,
+		ir.OSEND_STICKY,
 		ir.OPRINT,
 		ir.OPRINTLN,
 		ir.OPANIC,
@@ -76,9 +80,9 @@ func walkStmt(n ir.Node) ir.Node {
 		}
 		return n
 
-	// special case for a receive where we throw away
-	// the value received.
-	case ir.ORECV:
+		// special case for a receive where we throw away
+		// the value received.
+	case ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE:
 		n := n.(*ir.UnaryExpr)
 		return walkRecv(n)
 

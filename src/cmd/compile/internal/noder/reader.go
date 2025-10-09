@@ -1782,6 +1782,18 @@ func (r *reader) stmt1(tag codeStmt, out *ir.Nodes) ir.Node {
 		value := r.expr()
 		return ir.NewSendStmt(pos, ch, value)
 
+	case stmtSendSticky:
+		pos := r.pos()
+		ch := r.expr()
+		value := r.expr()
+		return ir.NewSendStmtSticky(pos, ch, value)
+
+	case stmtSendStickyFinal:
+		pos := r.pos()
+		ch := r.expr()
+		value := r.expr()
+		return ir.NewSendStmtFinal(pos, ch, value)
+
 	case stmtSwitch:
 		return r.switchStmt(label)
 	}
@@ -1947,7 +1959,8 @@ func (r *reader) selectStmt(label *types.Sym) ir.Node {
 				base.AssertfAt(conv.Implicit(), conv.Pos(), "expected implicit conversion: %v", conv)
 
 				recv := conv.X
-				base.AssertfAt(recv.Op() == ir.ORECV, recv.Pos(), "expected receive expression: %v", recv)
+				rop := recv.Op()
+				base.AssertfAt((rop == ir.ORECV || rop == ir.ORECV_STICKY || rop == ir.ORECV_PIPE), recv.Pos(), "expected receive expression: %v", recv)
 
 				tmp := r.temp(pos, recv.Type())
 
@@ -1969,7 +1982,8 @@ func (r *reader) selectStmt(label *types.Sym) ir.Node {
 		// shuffle things around to fit that pattern.
 		if as2, ok := comm.(*ir.AssignListStmt); ok && as2.Op() == ir.OAS2 {
 			init := ir.TakeInit(as2.Rhs[0])
-			base.AssertfAt(len(init) == 1 && init[0].Op() == ir.OAS2RECV, as2.Pos(), "unexpected assignment: %+v", as2)
+			op0 := init[0].Op()
+			base.AssertfAt(len(init) == 1 && (op0 == ir.OAS2RECV || op0 == ir.OAS2RECV_STICKY || op0 == ir.OAS2RECV_PIPE), as2.Pos(), "unexpected assignment: %+v", as2)
 
 			comm = init[0]
 			body = append([]ir.Node{as2}, body...)

@@ -167,9 +167,17 @@ func mapclear(mapType *byte, hmap map[any]any)
 func makechan64(chanType *byte, size int64) (hchan chan any)
 func makechan(chanType *byte, size int) (hchan chan any)
 func chanrecv1(hchan <-chan any, elem *any)
+func chanrecv1sticky(hchan <-chan any, elem *any)
+func chanrecv1pipe(hchan <-chan any, elem *any)
 func chanrecv2(hchan <-chan any, elem *any) bool
+func chanrecv2sticky(hchan <-chan any, elem *any) bool
+func chanrecv2pipe(hchan <-chan any, elem *any) bool
 func chansend1(hchan chan<- any, elem *any)
+func chansend1sticky(hchan chan<- any, elem *any)
+func chansend1stickyFinal(hchan chan<- any, elem *any)
 func closechan(hchan chan<- any)
+func clearchan(hchan chan<- any)
+func deletechan(hchan chan<- any)
 func chanlen(hchan any) int
 func chancap(hchan any) int
 
@@ -186,7 +194,11 @@ func typedmemclr(typ *byte, dst *any)
 func typedslicecopy(typ *byte, dstPtr *any, dstLen int, srcPtr *any, srcLen int) int
 
 func selectnbsend(hchan chan<- any, elem *any) bool
+func selectnbsendSticky(hchan chan<- any, elem *any) bool
+func selectnbsendStickyFinal(hchan chan<- any, elem *any) bool
 func selectnbrecv(elem *any, hchan <-chan any) (bool, bool)
+func selectnbrecvSticky(elem *any, hchan <-chan any) (bool, bool)
+func selectnbrecvPipe(elem *any, hchan <-chan any) (bool, bool)
 
 func selectsetpc(pc *uintptr)
 func selectgo(cas0 *byte, order0 *byte, pc0 *uintptr, nsends int, nrecvs int, block bool) (int, bool)

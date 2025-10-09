@@ -112,9 +112,12 @@ type linkname struct {
 }
 
 var unOps = [...]ir.Op{
-	syntax.Recv: ir.ORECV,
-	syntax.Mul:  ir.ODEREF,
-	syntax.And:  ir.OADDR,
+	syntax.Recv:       ir.ORECV,
+	syntax.RecvSticky: ir.ORECV_STICKY,
+	syntax.RecvPipe:   ir.ORECV_PIPE,
+
+	syntax.Mul: ir.ODEREF,
+	syntax.And: ir.OADDR,
 
 	syntax.Not: ir.ONOT,
 	syntax.Xor: ir.OBITNOT,

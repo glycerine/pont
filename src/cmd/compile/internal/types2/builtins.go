@@ -232,10 +232,10 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 
 		if !underIs(x.typ, func(u Type) bool {
 			switch u.(type) {
-			case *Map, *Slice:
+			case *Map, *Slice, *Chan:
 				return true
 			}
-			check.errorf(x, InvalidClear, invalidArg+"cannot clear %s: argument must be (or constrained by) map or slice", x)
+			check.errorf(x, InvalidClear, invalidArg+"cannot clear %s: argument must be (or constrained by) map, slice, or chan", x)
 			return false
 		}) {
 			return
@@ -415,6 +415,44 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 		x.typ = Typ[Int]
 
 	case _Delete:
+		// delete(chan_) or delete(map_, key)
+		earlyTerm := false
+		isChan := underIs(x.typ, func(u Type) bool {
+			switch u.(type) {
+			case *Map:
+				return false
+			case *Chan:
+				return true
+			default:
+				earlyTerm = true
+				check.errorf(x, InvalidDelete, invalidArg+"%s is not a map or channel", x)
+				return false
+			}
+		})
+		if earlyTerm {
+			return
+		}
+		if isChan {
+			x.mode = novalue
+			if check.recordTypes() {
+				check.recordBuiltinType(call.Fun, makeSig(nil, x.typ))
+			}
+			// type check ok
+			return true
+		} else {
+			// because we relaxed the delete typecheck above to
+			// allow a single argument delete(chan), we want to
+			// enforce stronger nargs check now that we know
+			// the argument is a map.
+			if nargs < 2 {
+				check.errorf(argErrPos(call), WrongArgCount, invalidOp+"not enough arguments for %v (expected 2, found %d)", call, nargs)
+				return
+			}
+			if nargs > 2 {
+				check.errorf(argErrPos(call), WrongArgCount, invalidOp+"too many arguments for %v (expected 2, found %d)", call, nargs)
+			}
+		}
+
 		// delete(map_, key)
 		// map_ must be a map type or a type parameter describing map types.
 		// The key cannot be a type parameter for now.

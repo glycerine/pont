@@ -31,11 +31,13 @@ func _() {
 	_ = x[AndNot-21]
 	_ = x[Shl-22]
 	_ = x[Shr-23]
+	_ = x[RecvSticky-24]
+	_ = x[RecvPipe-25]
 }
 
-const _Operator_name = ":!<-~||&&==!=<<=>>=+-|^*/%&&^<<>>"
+const _Operator_name = ":!<-~||&&==!=<<=>>=+-|^*/%&&^<<>><#<|"
 
-var _Operator_index = [...]uint8{0, 1, 2, 4, 5, 7, 9, 11, 13, 14, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 31, 33}
+var _Operator_index = [...]uint8{0, 1, 2, 4, 5, 7, 9, 11, 13, 14, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 31, 33, 35, 37}
 
 func (i Operator) String() string {
 	i -= 1

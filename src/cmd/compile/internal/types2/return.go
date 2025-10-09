@@ -18,7 +18,8 @@ func (check *Checker) isTerminating(s syntax.Stmt, label string) bool {
 	default:
 		panic("unreachable")
 
-	case *syntax.DeclStmt, *syntax.EmptyStmt, *syntax.SendStmt,
+	case *syntax.DeclStmt, *syntax.EmptyStmt,
+		*syntax.SendStmt, *syntax.SendStmtFinal, *syntax.SendStmtSticky,
 		*syntax.AssignStmt, *syntax.CallStmt:
 		// no chance
 
@@ -111,7 +112,8 @@ func hasBreak(s syntax.Stmt, label string, implicit bool) bool {
 		panic("unreachable")
 
 	case *syntax.DeclStmt, *syntax.EmptyStmt, *syntax.ExprStmt,
-		*syntax.SendStmt, *syntax.AssignStmt, *syntax.CallStmt,
+		*syntax.SendStmt, *syntax.SendStmtFinal, *syntax.SendStmtSticky,
+		*syntax.AssignStmt, *syntax.CallStmt,
 		*syntax.ReturnStmt:
 		// no chance
 

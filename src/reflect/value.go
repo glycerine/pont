@@ -2090,12 +2090,42 @@ func (v Value) Pointer() uintptr {
 func (v Value) Recv() (x Value, ok bool) {
 	v.mustBe(Chan)
 	v.mustBeExported()
-	return v.recv(false)
+	const sticky, pipe = false, false
+	return v.recv(false, sticky, pipe)
+}
+
+// RecvFull is like Recv in that it receives and
+// returns a value from the channel v. However
+// RecvFull receives a value if and only if
+// the channel is full. Implements the
+// full-receive (earlier known as pipe-receive) '<|' operator.
+func (v Value) RecvFull() (x Value, ok bool) {
+	v.mustBe(Chan)
+	v.mustBeExported()
+	const sticky, pipe = false, true
+	return v.recv(false, sticky, pipe)
+}
+
+// RecvSticky is like Recv in that it receives and
+// returns a value from the channel v. However
+// RecvSticky will consume and remove a sticky value
+// at the head (next to be read) position in the
+// channel, or a regular non-sticky value at the
+// head; RecvSticky ignores the stickiness of
+// the received value. If the head value was sticky
+// before the RecvSticky, afterwards the
+// channel will be empty. RecvSticky mplements the
+// '<$' sticky-receive operator.
+func (v Value) RecvSticky() (x Value, ok bool) {
+	v.mustBe(Chan)
+	v.mustBeExported()
+	const sticky, pipe = true, false
+	return v.recv(false, sticky, pipe)
 }
 
 // internal recv, possibly non-blocking (nb).
 // v is known to be a channel.
-func (v Value) recv(nb bool) (val Value, ok bool) {
+func (v Value) recv(nb, sticky, pipe bool) (val Value, ok bool) {
 	tt := (*chanType)(unsafe.Pointer(v.typ()))
 	if ChanDir(tt.Dir)&RecvDir == 0 {
 		panic("reflect: recv on send-only channel")
@@ -2110,7 +2140,7 @@ func (v Value) recv(nb bool) (val Value, ok bool) {
 	} else {
 		p = unsafe.Pointer(&val.ptr)
 	}
-	selected, ok := chanrecv(v.pointer(), nb, p)
+	selected, ok := chanrecv(v.pointer(), nb, p, sticky, pipe)
 	if !selected {
 		val = Value{}
 	}
@@ -2123,12 +2153,30 @@ func (v Value) recv(nb bool) (val Value, ok bool) {
 func (v Value) Send(x Value) {
 	v.mustBe(Chan)
 	v.mustBeExported()
-	v.send(x, false)
+	const sticky, final = false, false
+	v.send(x, false, sticky, final)
+}
+
+// SendSticky does a sticky-send. It
+// has the same type requirements
+// as its sibling Send, but x is read
+// and not consumed when it reaches the
+// head (next-to-be-read) position in
+// the channel. If final is true then
+// as x reaches the head the channel
+// is also closed before x is read.
+// SendSticky implements the '<$' sticky-send
+// operator and the '<#' final-send
+// operator. Final sends are always sticky.
+func (v Value) SendSticky(x Value, final bool) {
+	v.mustBe(Chan)
+	v.mustBeExported()
+	v.send(x, false, true, final)
 }
 
 // internal send, possibly non-blocking.
 // v is known to be a channel.
-func (v Value) send(x Value, nb bool) (selected bool) {
+func (v Value) send(x Value, nb, sticky, final bool) (selected bool) {
 	tt := (*chanType)(unsafe.Pointer(v.typ()))
 	if ChanDir(tt.Dir)&SendDir == 0 {
 		panic("reflect: send on recv-only channel")
@@ -2141,7 +2189,7 @@ func (v Value) send(x Value, nb bool) (selected bool) {
 	} else {
 		p = unsafe.Pointer(&x.ptr)
 	}
-	return chansend(v.pointer(), p, nb)
+	return chansend(v.pointer(), p, nb, sticky, final)
 }
 
 // Set assigns x to the value v.
@@ -2463,7 +2511,28 @@ func (v Value) stringNonString() string {
 func (v Value) TryRecv() (x Value, ok bool) {
 	v.mustBe(Chan)
 	v.mustBeExported()
-	return v.recv(true)
+	const sticky, pipe = false, false
+	return v.recv(true, sticky, pipe)
+}
+
+// TryRecvFull attempts to do a full-receive from the
+// channel v (it will succeed only if v is full), but will not block.
+// See RecvFull for further detail.
+func (v Value) TryRecvFull() (x Value, ok bool) {
+	v.mustBe(Chan)
+	v.mustBeExported()
+	const sticky, pipe = false, true
+	return v.recv(true, sticky, pipe)
+}
+
+// TryRecvSticky attempts to do a sticky-receive from the
+// channel v, but will not block.
+// See RecvSticky for further detail.
+func (v Value) TryRecvSticky() (x Value, ok bool) {
+	v.mustBe(Chan)
+	v.mustBeExported()
+	const sticky, pipe = true, false
+	return v.recv(true, sticky, pipe)
 }
 
 // TrySend attempts to send x on the channel v but will not block.
@@ -2473,7 +2542,19 @@ func (v Value) TryRecv() (x Value, ok bool) {
 func (v Value) TrySend(x Value) bool {
 	v.mustBe(Chan)
 	v.mustBeExported()
-	return v.send(x, true)
+	const sticky, final = false, false
+	return v.send(x, true, sticky, final)
+}
+
+// TrySendSticky attempts to sticky-send x on the channel v but will not block.
+// It panics if v's Kind is not [Chan].
+// It reports whether the value was sent.
+// As in Go, x's value must be assignable to the channel's element type.
+// See SendSticky for more detail.
+func (v Value) TrySendSticky(x Value, final bool) bool {
+	v.mustBe(Chan)
+	v.mustBeExported()
+	return v.send(x, true, true, final)
 }
 
 // Type returns v's type.
@@ -3708,14 +3789,14 @@ func chanlen(ch unsafe.Pointer) int
 // proper escape behavior.
 
 //go:noescape
-func chanrecv(ch unsafe.Pointer, nb bool, val unsafe.Pointer) (selected, received bool)
+func chanrecv(ch unsafe.Pointer, nb bool, val unsafe.Pointer, sticky, pipe bool) (selected, received bool)
 
 //go:noescape
-func chansend0(ch unsafe.Pointer, val unsafe.Pointer, nb bool) bool
+func chansend0(ch unsafe.Pointer, val unsafe.Pointer, nb, sticky, final bool) bool
 
-func chansend(ch unsafe.Pointer, val unsafe.Pointer, nb bool) bool {
+func chansend(ch unsafe.Pointer, val unsafe.Pointer, nb, sticky, final bool) bool {
 	contentEscapes(val)
-	return chansend0(ch, val, nb)
+	return chansend0(ch, val, nb, sticky, final)
 }
 
 func makechan(typ *abi.Type, size int) (ch unsafe.Pointer)

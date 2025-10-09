@@ -1,0 +1,22 @@
+first read: 9
+second read: 9
+third read: 9
+fourth read, ok got: v=17, ok=true
+fifth read, ok got: v=8, ok=true
+sixth read, ok got: v=80808, ok=true; len(ch) = 1
+7 after clear(ch), len(ch) = 0
+8 after ch <- 12121, len(ch) = 1
+9 after read: v=12121, ok = true
+10 pre close read, expect -11: v=-11, ok = true
+11 pre close read, expect -11: v=-11, ok = true
+11.5 : expect 9: v=9, ok = true
+12 3rd sticky read on pre closed: expect -11: v=-11, ok = true
+13 4th sticky read on pre closed: expect -11: v=-11, ok = true
+about to close(ch)
+14 after close read, expect -11: v=-11, ok = false
+15 2nd sticky read on closed: expect -11: v=-11, ok = false
+good: caught expected panic on send to closed channel
+16 3rd sticky read on closed: expect -11: v=-11, ok = false
+17 4th sticky read on closed: expect -11: v=-11, ok = false
+good: caught expected panic on clear of closed channel
+good: no panic on len of deleted channel

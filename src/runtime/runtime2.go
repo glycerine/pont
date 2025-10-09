@@ -415,6 +415,11 @@ type sudog struct {
 
 	elem maybeTraceablePtr // data element (may point to stack)
 
+	stickysend bool
+	finalsend  bool
+	stickyrecv bool
+	piperecv   bool
+
 	// The following fields are never accessed concurrently.
 	// For channels, waitlink is only accessed by g.
 	// For semaphores, all fields (including the ones above)

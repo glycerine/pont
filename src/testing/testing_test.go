@@ -332,7 +332,13 @@ func TestChdir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rel, err := filepath.Rel(oldDir, tmp)
+	// The "relative" test case also relies on oldDir not containing symlinks.
+	oldDirNoSymLinks, err := filepath.EvalSymlinks(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rel, err := filepath.Rel(oldDirNoSymLinks, tmp)
 	if err != nil {
 		// If GOROOT is on C: volume and tmp is on the D: volume, there
 		// is no relative path between them, so skip that test case.

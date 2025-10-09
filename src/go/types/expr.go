@@ -146,7 +146,7 @@ func (check *Checker) unary(x *operand, e *ast.UnaryExpr) {
 		x.typ = &Pointer{base: x.typ}
 		return
 
-	case token.ARROW:
+	case token.ARROW, token.STICKY_ARROW, token.PIPE_ARROW:
 		if elem := check.chanElem(x, x, true); elem != nil {
 			x.mode = commaok
 			x.typ = elem
@@ -1170,7 +1170,9 @@ func (check *Checker) exprInternal(T *target, x *operand, e ast.Expr, hint Type)
 		if x.mode == invalid {
 			goto Error
 		}
-		if e.Op == token.ARROW {
+		if e.Op == token.ARROW ||
+			e.Op == token.STICKY_ARROW ||
+			e.Op == token.PIPE_ARROW {
 			x.expr = e
 			return statement // receive operations may appear in statement context
 		}

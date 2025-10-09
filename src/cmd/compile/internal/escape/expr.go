@@ -134,7 +134,7 @@ func (e *escape) exprSkipInit(k hole, n ir.Node) {
 		// the slice pointer flows directly to the result
 		n := n.(*ir.ConvExpr)
 		e.expr(k, n.X)
-	case ir.ORECV:
+	case ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE:
 		n := n.(*ir.UnaryExpr)
 		e.discard(n.X)
 

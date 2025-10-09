@@ -436,6 +436,14 @@ func childrenOf(n ast.Node) []ast.Node {
 		children = append(children,
 			tok(n.Arrow, len("<-")))
 
+	case *ast.SendStmtFinal:
+		children = append(children,
+			tok(n.Arrow, len("<$")))
+
+	case *ast.SendStmtSticky:
+		children = append(children,
+			tok(n.Arrow, len("<~")))
+
 	case *ast.SliceExpr:
 		children = append(children,
 			tok(n.Lbrack, len("[")),
@@ -625,6 +633,10 @@ func NodeDescription(n ast.Node) string {
 		return "selector"
 	case *ast.SendStmt:
 		return "channel send"
+	case *ast.SendStmtFinal:
+		return "channel final-send"
+	case *ast.SendStmtSticky:
+		return "channel sticky-send"
 	case *ast.SliceExpr:
 		return "slice expression"
 	case *ast.StarExpr:

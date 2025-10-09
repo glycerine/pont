@@ -12,6 +12,21 @@ import (
 	"unsafe"
 )
 
+// simulationMode enables deterministic scheduling
+// for testing.
+var simulationMode bool
+
+// InSimulationMode lets test confirm that
+// simulation mode is in force. Avoids a spurious test
+// failure in runtime/map_test.go
+func InSimulationMode() bool {
+	return simulationMode
+}
+
+// simulationModeSeed gives the psuedo rng seed
+// when in simulationMode.
+var simulationModeSeed uint64
+
 // Keep a cached value to make gotraceback fast,
 // since we call it on every call to gentraceback.
 // The cached value is a uint32 in which the low bits

@@ -103,7 +103,7 @@ func (ro *ReassignOracle) Init(fn *Func) {
 		case OAS:
 			asn := n.(*AssignStmt)
 			pruneIfNeeded(asn.X, n)
-		case OAS2, OAS2FUNC, OAS2MAPR, OAS2DOTTYPE, OAS2RECV, OSELRECV2:
+		case OAS2, OAS2FUNC, OAS2MAPR, OAS2DOTTYPE, OAS2RECV, OSELRECV2, OAS2RECV_STICKY, OSELRECV2_STICKY, OAS2RECV_PIPE, OSELRECV2_PIPE:
 			asn := n.(*AssignListStmt)
 			for _, p := range asn.Lhs {
 				pruneIfNeeded(p, n)

@@ -765,7 +765,7 @@ func (o *orderState) stmt(n ir.Node) {
 	//
 	// OAS2MAPR: make sure key is addressable if needed,
 	//           and make sure OINDEXMAP is not copied out.
-	case ir.OAS2DOTTYPE, ir.OAS2RECV, ir.OAS2MAPR:
+	case ir.OAS2DOTTYPE, ir.OAS2MAPR, ir.OAS2RECV, ir.OAS2RECV_STICKY, ir.OAS2RECV_PIPE:
 		n := n.(*ir.AssignListStmt)
 		t := o.markTemp()
 		o.exprList(n.Lhs)
@@ -779,7 +779,7 @@ func (o *orderState) stmt(n ir.Node) {
 			r.X = o.expr(r.X, nil)
 			r.RType = o.expr(r.RType, nil)
 			r.ITab = o.expr(r.ITab, nil)
-		case ir.ORECV:
+		case ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE:
 			r := r.(*ir.UnaryExpr)
 			r.X = o.expr(r.X, nil)
 		case ir.OINDEXMAP:
@@ -830,7 +830,7 @@ func (o *orderState) stmt(n ir.Node) {
 			}
 		}
 
-	case ir.OCHECKNIL, ir.OCLEAR, ir.OCLOSE, ir.OPANIC, ir.ORECV:
+	case ir.OCHECKNIL, ir.OCLEAR, ir.OCLOSE, ir.OPANIC, ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE:
 		n := n.(*ir.UnaryExpr)
 		t := o.markTemp()
 		n.X = o.expr(n.X, nil)
@@ -865,8 +865,10 @@ func (o *orderState) stmt(n ir.Node) {
 		n := n.(*ir.CallExpr)
 		t := o.markTemp()
 		n.Args[0] = o.expr(n.Args[0], nil)
-		n.Args[1] = o.expr(n.Args[1], nil)
-		n.Args[1] = o.mapKeyTemp(n.Pos(), n.Args[0].Type(), n.Args[1])
+		if len(n.Args) > 1 {
+			n.Args[1] = o.expr(n.Args[1], nil)
+			n.Args[1] = o.mapKeyTemp(n.Pos(), n.Args[0].Type(), n.Args[1])
+		}
 		o.out = append(o.out, n)
 		o.popTemp(t)
 
@@ -1011,7 +1013,7 @@ func (o *orderState) stmt(n ir.Node) {
 				ir.Dump("select case", r)
 				base.Fatalf("unknown op in select %v", r.Op())
 
-			case ir.OSELRECV2:
+			case ir.OSELRECV2, ir.OSELRECV2_STICKY, ir.OSELRECV2_PIPE:
 				// case x, ok = <-c
 				r := r.(*ir.AssignListStmt)
 				recv := r.Rhs[0].(*ir.UnaryExpr)
@@ -1075,6 +1077,45 @@ func (o *orderState) stmt(n ir.Node) {
 				if !ir.IsAutoTmp(r.Value) {
 					r.Value = o.copyExpr(r.Value)
 				}
+
+			case ir.OSEND_FINAL:
+				r := r.(*ir.SendStmtFinal)
+				if len(r.Init()) != 0 {
+					ir.DumpList("ninit", r.Init())
+					base.Fatalf("ninit on select send-final")
+				}
+
+				// case c <$ x
+				// r->left is c, r->right is x, both are always evaluated.
+				r.Chan = o.expr(r.Chan, nil)
+
+				if !ir.IsAutoTmp(r.Chan) {
+					r.Chan = o.copyExpr(r.Chan)
+				}
+				r.Value = o.expr(r.Value, nil)
+				if !ir.IsAutoTmp(r.Value) {
+					r.Value = o.copyExpr(r.Value)
+				}
+
+			case ir.OSEND_STICKY:
+				r := r.(*ir.SendStmtSticky)
+				if len(r.Init()) != 0 {
+					ir.DumpList("ninit", r.Init())
+					base.Fatalf("ninit on select send-sticky")
+				}
+
+				// case c <~ x
+				// r->left is c, r->right is x, both are always evaluated.
+				r.Chan = o.expr(r.Chan, nil)
+
+				if !ir.IsAutoTmp(r.Chan) {
+					r.Chan = o.copyExpr(r.Chan)
+				}
+				r.Value = o.expr(r.Value, nil)
+				if !ir.IsAutoTmp(r.Value) {
+					r.Value = o.copyExpr(r.Value)
+				}
+
 			}
 		}
 		// Now that we have accumulated all the temporaries, clean them.
@@ -1094,6 +1135,36 @@ func (o *orderState) stmt(n ir.Node) {
 	// Special: value being sent is passed as a pointer; make it addressable.
 	case ir.OSEND:
 		n := n.(*ir.SendStmt)
+		t := o.markTemp()
+		n.Chan = o.expr(n.Chan, nil)
+		n.Value = o.expr(n.Value, nil)
+		if base.Flag.Cfg.Instrumenting {
+			// Force copying to the stack so that (chan T)(nil) <- x
+			// is still instrumented as a read of x.
+			n.Value = o.copyExpr(n.Value)
+		} else {
+			n.Value = o.addrTemp(n.Value)
+		}
+		o.out = append(o.out, n)
+		o.popTemp(t)
+
+	case ir.OSEND_FINAL:
+		n := n.(*ir.SendStmtFinal)
+		t := o.markTemp()
+		n.Chan = o.expr(n.Chan, nil)
+		n.Value = o.expr(n.Value, nil)
+		if base.Flag.Cfg.Instrumenting {
+			// Force copying to the stack so that (chan T)(nil) <- x
+			// is still instrumented as a read of x.
+			n.Value = o.copyExpr(n.Value)
+		} else {
+			n.Value = o.addrTemp(n.Value)
+		}
+		o.out = append(o.out, n)
+		o.popTemp(t)
+
+	case ir.OSEND_STICKY:
+		n := n.(*ir.SendStmtSticky)
 		t := o.markTemp()
 		n.Chan = o.expr(n.Chan, nil)
 		n.Value = o.expr(n.Value, nil)
@@ -1433,7 +1504,7 @@ func (o *orderState) expr1(n, lhs ir.Node) ir.Node {
 		}
 		return n
 
-	case ir.ORECV:
+	case ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE:
 		n := n.(*ir.UnaryExpr)
 		n.X = o.expr(n.X, nil)
 		return o.copyExprClear(n)

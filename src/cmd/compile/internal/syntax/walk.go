@@ -228,6 +228,14 @@ func (w walker) node(n Node) {
 		w.node(n.Chan)
 		w.node(n.Value)
 
+	case *SendStmtFinal:
+		w.node(n.Chan)
+		w.node(n.Value)
+
+	case *SendStmtSticky:
+		w.node(n.Chan)
+		w.node(n.Value)
+
 	case *DeclStmt:
 		w.declList(n.DeclList)
 

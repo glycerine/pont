@@ -139,12 +139,23 @@ func (e *escape) stmt(n ir.Node) {
 			e.stmt(cas.Comm)
 			e.block(cas.Body)
 		}
-	case ir.ORECV:
+	case ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE:
 		// TODO(mdempsky): Consider e.discard(n.Left).
 		n := n.(*ir.UnaryExpr)
 		e.exprSkipInit(e.discardHole(), n) // already visited n.Ninit
+
 	case ir.OSEND:
 		n := n.(*ir.SendStmt)
+		e.discard(n.Chan)
+		e.assignHeap(n.Value, "send", n)
+
+	case ir.OSEND_FINAL:
+		n := n.(*ir.SendStmtFinal)
+		e.discard(n.Chan)
+		e.assignHeap(n.Value, "send", n)
+
+	case ir.OSEND_STICKY:
+		n := n.(*ir.SendStmtSticky)
 		e.discard(n.Chan)
 		e.assignHeap(n.Value, "send", n)
 
@@ -168,6 +179,14 @@ func (e *escape) stmt(n ir.Node) {
 	case ir.OAS2RECV, ir.OSELRECV2: // v, ok = <-ch
 		n := n.(*ir.AssignListStmt)
 		e.assignList(n.Lhs, n.Rhs, "assign-pair-receive", n)
+
+	case ir.OAS2RECV_STICKY, ir.OSELRECV2_STICKY: // v, ok = <~ch
+		n := n.(*ir.AssignListStmt)
+		e.assignList(n.Lhs, n.Rhs, "assign-pair-receive-sticky", n)
+
+	case ir.OAS2RECV_PIPE, ir.OSELRECV2_PIPE: // v, ok = <|ch
+		n := n.(*ir.AssignListStmt)
+		e.assignList(n.Lhs, n.Rhs, "assign-pair-receive-pipe", n)
 
 	case ir.OAS2FUNC:
 		n := n.(*ir.AssignListStmt)

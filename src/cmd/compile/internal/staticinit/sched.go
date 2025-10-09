@@ -121,7 +121,7 @@ func (s *Schedule) tryStaticInit(n ir.Node) bool {
 			}
 		}
 		return false
-	case ir.OAS2DOTTYPE, ir.OAS2FUNC, ir.OAS2MAPR, ir.OAS2RECV:
+	case ir.OAS2DOTTYPE, ir.OAS2FUNC, ir.OAS2MAPR, ir.OAS2RECV, ir.OAS2RECV_STICKY:
 		n := n.(*ir.AssignListStmt)
 		if len(n.Lhs) < 2 || len(n.Rhs) != 1 {
 			base.FatalfAt(n.Pos(), "unexpected shape for %v: %v", n.Op(), n)
@@ -938,7 +938,7 @@ func mayModifyPkgVar(n ir.Node) bool {
 				return true
 			}
 
-		case ir.OAS2, ir.OAS2DOTTYPE, ir.OAS2FUNC, ir.OAS2MAPR, ir.OAS2RECV:
+		case ir.OAS2, ir.OAS2DOTTYPE, ir.OAS2FUNC, ir.OAS2MAPR, ir.OAS2RECV, ir.OAS2RECV_STICKY, ir.OAS2RECV_PIPE:
 			n := n.(*ir.AssignListStmt)
 			for _, lhs := range n.Lhs {
 				if !safeLHS(lhs) {

@@ -360,13 +360,21 @@ func typecheck1(n ir.Node, top int) ir.Node {
 		n := n.(*ir.IndexExpr)
 		return tcIndex(n)
 
-	case ir.ORECV:
+	case ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE:
 		n := n.(*ir.UnaryExpr)
 		return tcRecv(n)
 
 	case ir.OSEND:
 		n := n.(*ir.SendStmt)
 		return tcSend(n)
+
+	case ir.OSEND_FINAL:
+		n := n.(*ir.SendStmtFinal)
+		return tcSendFinal(n)
+
+	case ir.OSEND_STICKY:
+		n := n.(*ir.SendStmtSticky)
+		return tcSendSticky(n)
 
 	case ir.OSLICEHEADER:
 		n := n.(*ir.SliceHeaderExpr)

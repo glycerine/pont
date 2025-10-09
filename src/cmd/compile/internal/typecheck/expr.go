@@ -691,7 +691,7 @@ func tcUnsafeData(n *ir.UnaryExpr) ir.Node {
 	return n
 }
 
-// tcRecv typechecks an ORECV node.
+// tcRecv typechecks an ORECV, ORECV_STICKY, ORECV_PIPE node.
 func tcRecv(n *ir.UnaryExpr) ir.Node {
 	n.X = Expr(n.X)
 	n.X = DefaultLit(n.X, nil)

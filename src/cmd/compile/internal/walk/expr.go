@@ -216,7 +216,19 @@ func walkExpr1(n ir.Node, init *ir.Nodes) ir.Node {
 	// order.stmt made sure x is addressable or blank.
 	case ir.OAS2RECV:
 		n := n.(*ir.AssignListStmt)
-		return walkAssignRecv(init, n)
+		return walkAssignRecv(init, n, false, false)
+
+	// x, y = <~c
+	// order.stmt made sure x is addressable or blank.
+	case ir.OAS2RECV_STICKY:
+		n := n.(*ir.AssignListStmt)
+		return walkAssignRecv(init, n, true, false)
+
+	// x, y = <|c
+	// order.stmt made sure x is addressable or blank.
+	case ir.OAS2RECV_PIPE:
+		n := n.(*ir.AssignListStmt)
+		return walkAssignRecv(init, n, false, true)
 
 	// a,b = m[i]
 	case ir.OAS2MAPR:
@@ -264,6 +276,14 @@ func walkExpr1(n ir.Node, init *ir.Nodes) ir.Node {
 		base.Fatalf("walkExpr ORECV") // should see inside OAS only
 		panic("unreachable")
 
+	case ir.ORECV_STICKY:
+		base.Fatalf("walkExpr ORECV_STICKY") // should see inside OAS only
+		panic("unreachable")
+
+	case ir.ORECV_PIPE:
+		base.Fatalf("walkExpr ORECV_PIPE") // should see inside OAS only
+		panic("unreachable")
+
 	case ir.OSLICEHEADER:
 		n := n.(*ir.SliceHeaderExpr)
 		return walkSliceHeader(n, init)
@@ -293,7 +313,7 @@ func walkExpr1(n ir.Node, init *ir.Nodes) ir.Node {
 
 	case ir.OCLEAR:
 		n := n.(*ir.UnaryExpr)
-		return walkClear(n)
+		return walkClear(n, init)
 
 	case ir.OCLOSE:
 		n := n.(*ir.UnaryExpr)
@@ -345,6 +365,14 @@ func walkExpr1(n ir.Node, init *ir.Nodes) ir.Node {
 	case ir.OSEND:
 		n := n.(*ir.SendStmt)
 		return walkSend(n, init)
+
+	case ir.OSEND_FINAL:
+		n := n.(*ir.SendStmtFinal)
+		return walkSendFinal(n, init)
+
+	case ir.OSEND_STICKY:
+		n := n.(*ir.SendStmtSticky)
+		return walkSendSticky(n, init)
 
 	case ir.OCLOSURE:
 		return walkClosure(n.(*ir.ClosureExpr), init)
@@ -908,6 +936,24 @@ func walkSend(n *ir.SendStmt, init *ir.Nodes) ir.Node {
 	n1 = walkExpr(n1, init)
 	n1 = typecheck.NodAddr(n1)
 	return mkcall1(chanfn("chansend1", 2, n.Chan.Type()), nil, init, n.Chan, n1)
+}
+
+// walkSendFinal walks an OSEND_FINAL node.
+func walkSendFinal(n *ir.SendStmtFinal, init *ir.Nodes) ir.Node {
+	n1 := n.Value
+	n1 = typecheck.AssignConv(n1, n.Chan.Type().Elem(), "chan send-final")
+	n1 = walkExpr(n1, init)
+	n1 = typecheck.NodAddr(n1)
+	return mkcall1(chanfn("chansend1stickyFinal", 2, n.Chan.Type()), nil, init, n.Chan, n1)
+}
+
+// walkSendSticky walks an OSEND_STICKY node.
+func walkSendSticky(n *ir.SendStmtSticky, init *ir.Nodes) ir.Node {
+	n1 := n.Value
+	n1 = typecheck.AssignConv(n1, n.Chan.Type().Elem(), "chan send-sticky")
+	n1 = walkExpr(n1, init)
+	n1 = typecheck.NodAddr(n1)
+	return mkcall1(chanfn("chansend1sticky", 2, n.Chan.Type()), nil, init, n.Chan, n1)
 }
 
 // walkSlice walks an OSLICE, OSLICEARR, OSLICESTR, OSLICE3, or OSLICE3ARR node.

@@ -1391,8 +1391,21 @@ func (w *writer) stmt1(stmt syntax.Stmt) {
 
 	case *syntax.SendStmt:
 		chanType := types2.CoreType(w.p.typeOf(stmt.Chan)).(*types2.Chan)
-
 		w.Code(stmtSend)
+		w.pos(stmt)
+		w.expr(stmt.Chan)
+		w.implicitConvExpr(chanType.Elem(), stmt.Value)
+
+	case *syntax.SendStmtFinal:
+		chanType := types2.CoreType(w.p.typeOf(stmt.Chan)).(*types2.Chan)
+		w.Code(stmtSendStickyFinal)
+		w.pos(stmt)
+		w.expr(stmt.Chan)
+		w.implicitConvExpr(chanType.Elem(), stmt.Value)
+
+	case *syntax.SendStmtSticky:
+		chanType := types2.CoreType(w.p.typeOf(stmt.Chan)).(*types2.Chan)
+		w.Code(stmtSendSticky)
 		w.pos(stmt)
 		w.expr(stmt.Chan)
 		w.implicitConvExpr(chanType.Elem(), stmt.Value)

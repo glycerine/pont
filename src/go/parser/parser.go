@@ -1805,6 +1805,7 @@ func (p *parser) parseUnaryExpr() ast.Expr {
 
 	case token.ARROW:
 		// channel type or receive expression
+		tok := p.tok
 		arrow := p.pos
 		p.next()
 
@@ -1847,7 +1848,25 @@ func (p *parser) parseUnaryExpr() ast.Expr {
 		}
 
 		// <-(expr)
-		return &ast.UnaryExpr{OpPos: arrow, Op: token.ARROW, X: x}
+		return &ast.UnaryExpr{OpPos: arrow, Op: tok, X: x}
+
+	case token.STICKY_ARROW:
+		// sticky receive expression
+		tok := p.tok
+		arrow := p.pos
+		p.next()
+		x := p.parseUnaryExpr()
+		// <~(expr)
+		return &ast.UnaryExpr{OpPos: arrow, Op: tok, X: x}
+
+	case token.PIPE_ARROW:
+		// pipe-receive expression
+		tok := p.tok
+		arrow := p.pos
+		p.next()
+		x := p.parseUnaryExpr()
+		// <|(expr)
+		return &ast.UnaryExpr{OpPos: arrow, Op: tok, X: x}
 
 	case token.MUL:
 		// pointer type or unary "*" expression
@@ -1989,6 +2008,20 @@ func (p *parser) parseSimpleStmt(mode int) (ast.Stmt, bool) {
 		p.next()
 		y := p.parseRhs()
 		return &ast.SendStmt{Chan: x[0], Arrow: arrow, Value: y}, false
+
+	case token.STICKY_ARROW:
+		// sticky send statement
+		arrow := p.pos
+		p.next()
+		y := p.parseRhs()
+		return &ast.SendStmtSticky{Chan: x[0], Arrow: arrow, Value: y}, false
+
+	case token.FINAL_ARROW:
+		// final sticky send statement
+		arrow := p.pos
+		p.next()
+		y := p.parseRhs()
+		return &ast.SendStmtFinal{Chan: x[0], Arrow: arrow, Value: y}, false
 
 	case token.INC, token.DEC:
 		// increment or decrement
@@ -2298,7 +2331,11 @@ func (p *parser) parseCommClause() *ast.CommClause {
 	if p.tok == token.CASE {
 		p.next()
 		lhs := p.parseList(false)
-		if p.tok == token.ARROW {
+
+		//pipe := (token.PIPE_ARROW == p.tok) // no sending <| at the moment, only receive.
+
+		switch p.tok {
+		case token.ARROW:
 			// SendStmt
 			if len(lhs) > 1 {
 				p.errorExpected(lhs[0].Pos(), "1 expression")
@@ -2308,7 +2345,30 @@ func (p *parser) parseCommClause() *ast.CommClause {
 			p.next()
 			rhs := p.parseRhs()
 			comm = &ast.SendStmt{Chan: lhs[0], Arrow: arrow, Value: rhs}
-		} else {
+
+		case token.FINAL_ARROW:
+			// SendStmtFinal
+			if len(lhs) > 1 {
+				p.errorExpected(lhs[0].Pos(), "1 expression")
+				// continue with first expression
+			}
+			arrow := p.pos
+			p.next()
+			rhs := p.parseRhs()
+			comm = &ast.SendStmtFinal{Chan: lhs[0], Arrow: arrow, Value: rhs}
+
+		case token.STICKY_ARROW:
+			// SendStmtSticky
+			if len(lhs) > 1 {
+				p.errorExpected(lhs[0].Pos(), "1 expression")
+				// continue with first expression
+			}
+			arrow := p.pos
+			p.next()
+			rhs := p.parseRhs()
+			comm = &ast.SendStmtSticky{Chan: lhs[0], Arrow: arrow, Value: rhs}
+		default:
+
 			// RecvStmt
 			if tok := p.tok; tok == token.ASSIGN || tok == token.DEFINE {
 				// RecvStmt with assignment
@@ -2454,7 +2514,7 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 		// tokens that may start an expression
 		token.IDENT, token.INT, token.FLOAT, token.IMAG, token.CHAR, token.STRING, token.FUNC, token.LPAREN, // operands
 		token.LBRACK, token.STRUCT, token.MAP, token.CHAN, token.INTERFACE, // composite types
-		token.ADD, token.SUB, token.MUL, token.AND, token.XOR, token.ARROW, token.NOT: // unary operators
+		token.ADD, token.SUB, token.MUL, token.AND, token.XOR, token.ARROW, token.STICKY_ARROW, token.PIPE_ARROW, token.NOT: // unary operators
 		s, _ = p.parseSimpleStmt(labelOk)
 		// because of the required look-ahead, labeled statements are
 		// parsed by parseSimpleStmt - don't expect a semicolon after

@@ -820,6 +820,31 @@ func getGodebugEarly() (string, bool) {
 	return env, true
 }
 
+// getEnvEarly extracts the value of an environment variable directly
+// from the raw C environ array, before goenvs() has built the Go
+// envs slice and before the heap is fully usable for general env access.
+// Modeled on getGodebugEarly. Returns "" if not found.
+func getEnvEarly(prefix string) string {
+	// prefix must include the trailing '=', e.g. "GO_DSIM_SEED=".
+	var env string
+	switch GOOS {
+	case "aix", "darwin", "ios", "dragonfly", "freebsd", "netbsd", "openbsd", "illumos", "solaris", "linux":
+		n := int32(0)
+		for argv_index(argv, argc+1+n) != nil {
+			n++
+		}
+		for i := int32(0); i < n; i++ {
+			p := argv_index(argv, argc+1+i)
+			s := unsafe.String(p, findnull(p))
+			if stringslite.HasPrefix(s, prefix) {
+				env = gostring(p)[len(prefix):]
+				break
+			}
+		}
+	}
+	return env
+}
+
 // The bootstrap sequence is:
 //
 //	call osinit
@@ -3440,7 +3465,12 @@ top:
 	// Check the global runnable queue once in a while to ensure fairness.
 	// Otherwise two goroutines can completely occupy the local runqueue
 	// by constantly respawning each other.
-	if pp.schedtick%61 == 0 && !sched.runq.empty() {
+
+	// Check the global runq at fixed intervals
+	// in simulation mode.
+	if (simulationMode && pp.schedtick%10 == 0) ||
+		(!simulationMode && pp.schedtick%61 == 0 && !sched.runq.empty()) {
+
 		lock(&sched.lock)
 		gp := globrunqget()
 		unlock(&sched.lock)
@@ -3834,7 +3864,21 @@ func stealWork(now int64) (gp *g, inheritTime bool, rnow, pollUntil int64, newWo
 	for i := 0; i < stealTries; i++ {
 		stealTimersOrRunNextG := i == stealTries-1
 
-		for enum := stealOrder.start(cheaprand()); !enum.done(); enum.next() {
+		// In simulation mode, use deterministic order instead of random
+		var enum randomEnum
+		if simulationMode {
+			// Use a fixed sequence based on iteration number
+			enum = randomEnum{
+				count: uint32(len(allp)),
+				pos:   uint32(i) % uint32(len(allp)),
+				inc:   1, // Fixed increment of 1 for deterministic order
+			}
+		} else {
+			enum = stealOrder.start(cheaprand())
+		}
+
+		for ; !enum.done(); enum.next() {
+
 			if sched.gcwaiting.Load() {
 				// GC work may be available.
 				return nil, false, now, pollUntil, true
@@ -5373,9 +5417,14 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr, parked bool, waitreaso
 		}
 	}
 	// Track initial transition?
-	newg.trackingSeq = uint8(cheaprand())
-	if newg.trackingSeq%gTrackingPeriod == 0 {
-		newg.tracking = true
+	if simulationMode {
+		newg.trackingSeq = uint8(255)
+		newg.tracking = false
+	} else {
+		newg.trackingSeq = uint8(cheaprand())
+		if newg.trackingSeq%gTrackingPeriod == 0 {
+			newg.tracking = true
+		}
 	}
 	gcController.addScannableStack(pp, int64(newg.stack.hi-newg.stack.lo))
 
@@ -7468,7 +7517,7 @@ func runqempty(pp *p) bool {
 // With the randomness here, as long as the tests pass
 // consistently with -race, they shouldn't have latent scheduling
 // assumptions.
-const randomizeScheduler = raceenabled
+var randomizeScheduler = raceenabled //|| simulationMode
 
 // runqput tries to put g on the local runnable queue.
 // If next is false, runqput adds g to the tail of the runnable queue.
@@ -7487,8 +7536,12 @@ func runqput(pp *p, gp *g, next bool) {
 		// risk starvation.
 		next = false
 	}
-	if randomizeScheduler && next && randn(2) == 0 {
-		next = false
+	if simulationMode {
+		next = false // (jea add): increases determinism
+	} else {
+		if randomizeScheduler && next && randn(2) == 0 {
+			next = false
+		}
 	}
 
 	if next {
@@ -7603,6 +7656,15 @@ func runqget(pp *p) (gp *g, inheritTime bool) {
 	// Hence, there's no need to retry this CAS if it fails.
 	if next != 0 && pp.runnext.cas(next, 0) {
 		return next.ptr(), true
+	}
+
+	// In simulation mode, always check runnext first
+	if simulationMode {
+		if next != 0 {
+			if pp.runnext.cas(next, 0) {
+				return next.ptr(), true
+			}
+		}
 	}
 
 	for {

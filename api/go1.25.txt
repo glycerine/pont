@@ -109,3 +109,30 @@ pkg testing/synctest, func Wait() #67434
 pkg unicode, var CategoryAliases map[string]string #70780
 pkg unicode, var Cn *RangeTable #70780
 pkg unicode, var LC *RangeTable #70780
+pkg reflect, method (Value) RecvFull() (Value, bool) #67434
+pkg reflect, method (Value) RecvSticky() (Value, bool) #67434
+pkg reflect, method (Value) SendSticky(Value, bool) #67434
+pkg reflect, method (Value) TryRecvFull() (Value, bool) #67434
+pkg reflect, method (Value) TryRecvSticky() (Value, bool) #67434
+pkg reflect, method (Value) TrySendSticky(Value, bool) bool #67434
+pkg runtime, func InSimulationMode() bool #67434
+pkg runtime, func JeaRandCallCounter() int #67434
+pkg runtime, func ResetDsimSeed(uint64) #67434
+pkg go/ast, method (*SendStmtFinal) End() token.Pos #67434
+pkg go/ast, method (*SendStmtFinal) Pos() token.Pos #67434
+pkg go/ast, method (*SendStmtSticky) End() token.Pos #67434
+pkg go/ast, method (*SendStmtSticky) Pos() token.Pos #67434
+pkg go/ast, type SendStmtFinal struct #67434
+pkg go/ast, type SendStmtFinal struct, Arrow token.Pos #67434
+pkg go/ast, type SendStmtFinal struct, Chan Expr #67434
+pkg go/ast, type SendStmtFinal struct, Value Expr #67434
+pkg go/ast, type SendStmtSticky struct #67434
+pkg go/ast, type SendStmtSticky struct, Arrow token.Pos #67434
+pkg go/ast, type SendStmtSticky struct, Chan Expr #67434
+pkg go/ast, type SendStmtSticky struct, Value Expr #67434
+pkg go/token, const FINAL_ARROW = 91 #67434
+pkg go/token, const FINAL_ARROW Token #67434
+pkg go/token, const PIPE_ARROW = 90 #67434
+pkg go/token, const PIPE_ARROW Token #67434
+pkg go/token, const STICKY_ARROW = 89 #67434
+pkg go/token, const STICKY_ARROW Token #67434

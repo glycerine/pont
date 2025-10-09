@@ -471,6 +471,28 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 			check.assignment(&val, elem, "send")
 		}
 
+	case *syntax.SendStmtFinal:
+		var ch, val operand
+		check.expr(nil, &ch, s.Chan)
+		check.expr(nil, &val, s.Value)
+		if ch.mode == invalid || val.mode == invalid {
+			return
+		}
+		if elem := check.chanElem(s, &ch, false); elem != nil {
+			check.assignment(&val, elem, "final-send")
+		}
+
+	case *syntax.SendStmtSticky:
+		var ch, val operand
+		check.expr(nil, &ch, s.Chan)
+		check.expr(nil, &val, s.Value)
+		if ch.mode == invalid || val.mode == invalid {
+			return
+		}
+		if elem := check.chanElem(s, &ch, false); elem != nil {
+			check.assignment(&val, elem, "sticky-send")
+		}
+
 	case *syntax.AssignStmt:
 		if s.Rhs == nil {
 			// x++ or x--
@@ -634,7 +656,7 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 			valid := false
 			var rhs syntax.Expr // rhs of RecvStmt, or nil
 			switch s := clause.Comm.(type) {
-			case nil, *syntax.SendStmt:
+			case nil, *syntax.SendStmt, *syntax.SendStmtSticky, *syntax.SendStmtFinal:
 				valid = true
 			case *syntax.AssignStmt:
 				if _, ok := s.Rhs.(*syntax.ListExpr); !ok {
@@ -646,7 +668,7 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 
 			// if present, rhs must be a receive operation
 			if rhs != nil {
-				if x, _ := syntax.Unparen(rhs).(*syntax.Operation); x != nil && x.Y == nil && x.Op == syntax.Recv {
+				if x, _ := syntax.Unparen(rhs).(*syntax.Operation); x != nil && x.Y == nil && (x.Op == syntax.Recv || x.Op == syntax.RecvSticky || x.Op == syntax.RecvPipe) {
 					valid = true
 				}
 			}

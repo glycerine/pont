@@ -85,6 +85,10 @@ func StartPos(n Node) Pos {
 		// case *ExprStmt:
 		case *SendStmt:
 			m = n.Chan
+		case *SendStmtFinal:
+			m = n.Chan
+		case *SendStmtSticky:
+			m = n.Chan
 		// case *DeclStmt:
 		case *AssignStmt:
 			m = n.Lhs
@@ -274,6 +278,10 @@ func EndPos(n Node) Pos {
 		case *ExprStmt:
 			m = n.X
 		case *SendStmt:
+			m = n.Value
+		case *SendStmtFinal:
+			m = n.Value
+		case *SendStmtSticky:
 			m = n.Value
 		case *DeclStmt:
 			if l := lastDecl(n.DeclList); l != nil {

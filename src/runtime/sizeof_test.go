@@ -22,7 +22,7 @@ func TestSizeof(t *testing.T) {
 		_64bit uintptr // size on 64bit platforms
 	}{
 		{runtime.G{}, 288 + xreg, 448 + xreg}, // g, but exported for testing
-		{runtime.Sudog{}, 64, 104},            // sudog, but exported for testing
+		{runtime.Sudog{}, 64, 112},            // sudog, but exported for testing
 	}
 
 	if xreg > runtime.PtrSize {

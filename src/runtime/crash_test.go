@@ -510,24 +510,19 @@ func TestRuntimePanicWithRuntimeError(t *testing.T) {
 			m[1234] = true
 		},
 		1: func() {
-			ch := make(chan struct{})
-			close(ch)
-			close(ch)
-		},
-		2: func() {
 			var ch = make(chan struct{})
 			close(ch)
 			ch <- struct{}{}
 		},
-		3: func() {
+		2: func() {
 			var s = make([]int, 2)
 			_ = s[2]
 		},
-		4: func() {
+		3: func() {
 			n := -1
 			_ = make(chan bool, n)
 		},
-		5: func() {
+		4: func() {
 			close((chan bool)(nil))
 		},
 	}

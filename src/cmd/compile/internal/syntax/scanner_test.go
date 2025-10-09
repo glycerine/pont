@@ -279,6 +279,9 @@ var sampleTokens = [...]struct {
 	{_Assign, "=", 0, 0},
 	{_Define, ":=", 0, 0},
 	{_Arrow, "<-", 0, 0},
+	{_StickyArrow, "<$", 0, 0},
+	{_PipeArrow, "<|", 0, 0},
+	{_FinalArrow, "<#", 0, 0},
 
 	// delimiters
 	{_Lparen, "(", 0, 0},

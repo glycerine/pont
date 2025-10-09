@@ -472,6 +472,28 @@ func (check *Checker) stmt(ctxt stmtContext, s ast.Stmt) {
 			check.assignment(&val, elem, "send")
 		}
 
+	case *ast.SendStmtFinal:
+		var ch, val operand
+		check.expr(nil, &ch, s.Chan)
+		check.expr(nil, &val, s.Value)
+		if ch.mode == invalid || val.mode == invalid {
+			return
+		}
+		if elem := check.chanElem(inNode(s, s.Arrow), &ch, false); elem != nil {
+			check.assignment(&val, elem, "final-send")
+		}
+
+	case *ast.SendStmtSticky:
+		var ch, val operand
+		check.expr(nil, &ch, s.Chan)
+		check.expr(nil, &val, s.Value)
+		if ch.mode == invalid || val.mode == invalid {
+			return
+		}
+		if elem := check.chanElem(inNode(s, s.Arrow), &ch, false); elem != nil {
+			check.assignment(&val, elem, "sticky-send")
+		}
+
 	case *ast.IncDecStmt:
 		var op token.Token
 		switch s.Tok {
@@ -798,7 +820,7 @@ func (check *Checker) stmt(ctxt stmtContext, s ast.Stmt) {
 			valid := false
 			var rhs ast.Expr // rhs of RecvStmt, or nil
 			switch s := clause.Comm.(type) {
-			case nil, *ast.SendStmt:
+			case nil, *ast.SendStmt, *ast.SendStmtFinal, *ast.SendStmtSticky:
 				valid = true
 			case *ast.AssignStmt:
 				if len(s.Rhs) == 1 {
@@ -810,7 +832,7 @@ func (check *Checker) stmt(ctxt stmtContext, s ast.Stmt) {
 
 			// if present, rhs must be a receive operation
 			if rhs != nil {
-				if x, _ := ast.Unparen(rhs).(*ast.UnaryExpr); x != nil && x.Op == token.ARROW {
+				if x, _ := ast.Unparen(rhs).(*ast.UnaryExpr); x != nil && (x.Op == token.ARROW || x.Op == token.STICKY_ARROW || x.Op == token.PIPE_ARROW) {
 					valid = true
 				}
 			}

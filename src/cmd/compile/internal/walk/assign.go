@@ -82,6 +82,26 @@ func walkAssign(init *ir.Nodes, n ir.Node) ir.Node {
 		r := recv.X // the channel
 		return mkcall1(chanfn("chanrecv1", 2, r.Type()), nil, init, r, n1)
 
+	case ir.ORECV_STICKY:
+		// x = <~c; as.Left is x, as.Right.Left is c.
+		// order.stmt made sure x is addressable.
+		recv := as.Y.(*ir.UnaryExpr)
+		recv.X = walkExpr(recv.X, init)
+
+		n1 := typecheck.NodAddr(as.X)
+		r := recv.X // the channel
+		return mkcall1(chanfn("chanrecv1sticky", 2, r.Type()), nil, init, r, n1)
+
+	case ir.ORECV_PIPE:
+		// x = <| c; as.Left is x, as.Right.Left is c.
+		// order.stmt made sure x is addressable.
+		recv := as.Y.(*ir.UnaryExpr)
+		recv.X = walkExpr(recv.X, init)
+
+		n1 := typecheck.NodAddr(as.X)
+		r := recv.X // the channel
+		return mkcall1(chanfn("chanrecv1pipe", 2, r.Type()), nil, init, r, n1)
+
 	case ir.OAPPEND:
 		// x = append(...)
 		call := as.Y.(*ir.CallExpr)
@@ -203,8 +223,8 @@ func walkAssignMapRead(init *ir.Nodes, n *ir.AssignListStmt) ir.Node {
 	return walkExpr(typecheck.Stmt(as), init)
 }
 
-// walkAssignRecv walks an OAS2RECV node.
-func walkAssignRecv(init *ir.Nodes, n *ir.AssignListStmt) ir.Node {
+// walkAssignRecv walks an OAS2RECV, OAS2RECV_STICKY, or OAS2RECV_PIPE node.
+func walkAssignRecv(init *ir.Nodes, n *ir.AssignListStmt, sticky, pipe bool) ir.Node {
 	init.Append(ir.TakeInit(n)...)
 
 	r := n.Rhs[0].(*ir.UnaryExpr) // recv
@@ -216,7 +236,17 @@ func walkAssignRecv(init *ir.Nodes, n *ir.AssignListStmt) ir.Node {
 	} else {
 		n1 = typecheck.NodAddr(n.Lhs[0])
 	}
-	fn := chanfn("chanrecv2", 2, r.X.Type())
+
+	//base.Warn("assign.go walkAssignRecv was called. r.Op() = '%#v'\n", r.Op()) // <~ seen. good.
+
+	var fn ir.Node
+	if pipe {
+		fn = chanfn("chanrecv2pipe", 2, r.X.Type())
+	} else if sticky {
+		fn = chanfn("chanrecv2sticky", 2, r.X.Type())
+	} else {
+		fn = chanfn("chanrecv2", 2, r.X.Type())
+	}
 	ok := n.Lhs[1]
 	call := mkcall1(fn, types.Types[types.TBOOL], init, r.X, n1)
 	return typecheck.Stmt(ir.NewAssignStmt(base.Pos, ok, call))

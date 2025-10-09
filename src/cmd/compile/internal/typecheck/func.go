@@ -361,9 +361,9 @@ func tcClear(n *ir.UnaryExpr) ir.Node {
 	}
 
 	switch {
-	case t.IsMap(), t.IsSlice():
+	case t.IsMap(), t.IsSlice(), t.IsChan():
 	default:
-		base.Errorf("invalid operation: %v (argument must be a map or slice)", n)
+		base.Errorf("invalid operation: %v (argument must be a map, slice, or chan)", n)
 		n.SetType(nil)
 		return n
 	}
@@ -490,8 +490,12 @@ func tcDelete(n *ir.CallExpr) ir.Node {
 	}
 
 	if len(args) == 1 {
-		base.Errorf("missing second (key) argument to delete")
-		n.SetType(nil)
+		l := args[0]
+		if l.Type() != nil && !l.Type().IsChan() {
+			base.Errorf("single argument delete only acts on channels; have %L", l.Type())
+			n.SetType(nil)
+			return n
+		}
 		return n
 	}
 

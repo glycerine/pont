@@ -1522,6 +1522,104 @@ func (n *SendStmt) editChildrenWithHidden(edit func(Node) Node) {
 	n.editChildren(edit)
 }
 
+func (n *SendStmtFinal) Format(s fmt.State, verb rune) { fmtNode(n, s, verb) }
+func (n *SendStmtFinal) copy() Node {
+	c := *n
+	c.init = copyNodes(c.init)
+	return &c
+}
+func (n *SendStmtFinal) doChildren(do func(Node) bool) bool {
+	if doNodes(n.init, do) {
+		return true
+	}
+	if n.Chan != nil && do(n.Chan) {
+		return true
+	}
+	if n.Value != nil && do(n.Value) {
+		return true
+	}
+	return false
+}
+func (n *SendStmtFinal) doChildrenWithHidden(do func(Node) bool) bool {
+	if doNodes(n.init, do) {
+		return true
+	}
+	if n.Chan != nil && do(n.Chan) {
+		return true
+	}
+	if n.Value != nil && do(n.Value) {
+		return true
+	}
+	return false
+}
+func (n *SendStmtFinal) editChildren(edit func(Node) Node) {
+	editNodes(n.init, edit)
+	if n.Chan != nil {
+		n.Chan = edit(n.Chan).(Node)
+	}
+	if n.Value != nil {
+		n.Value = edit(n.Value).(Node)
+	}
+}
+func (n *SendStmtFinal) editChildrenWithHidden(edit func(Node) Node) {
+	editNodes(n.init, edit)
+	if n.Chan != nil {
+		n.Chan = edit(n.Chan).(Node)
+	}
+	if n.Value != nil {
+		n.Value = edit(n.Value).(Node)
+	}
+}
+
+func (n *SendStmtSticky) Format(s fmt.State, verb rune) { fmtNode(n, s, verb) }
+func (n *SendStmtSticky) copy() Node {
+	c := *n
+	c.init = copyNodes(c.init)
+	return &c
+}
+func (n *SendStmtSticky) doChildren(do func(Node) bool) bool {
+	if doNodes(n.init, do) {
+		return true
+	}
+	if n.Chan != nil && do(n.Chan) {
+		return true
+	}
+	if n.Value != nil && do(n.Value) {
+		return true
+	}
+	return false
+}
+func (n *SendStmtSticky) doChildrenWithHidden(do func(Node) bool) bool {
+	if doNodes(n.init, do) {
+		return true
+	}
+	if n.Chan != nil && do(n.Chan) {
+		return true
+	}
+	if n.Value != nil && do(n.Value) {
+		return true
+	}
+	return false
+}
+func (n *SendStmtSticky) editChildren(edit func(Node) Node) {
+	editNodes(n.init, edit)
+	if n.Chan != nil {
+		n.Chan = edit(n.Chan).(Node)
+	}
+	if n.Value != nil {
+		n.Value = edit(n.Value).(Node)
+	}
+}
+func (n *SendStmtSticky) editChildrenWithHidden(edit func(Node) Node) {
+	editNodes(n.init, edit)
+	if n.Chan != nil {
+		n.Chan = edit(n.Chan).(Node)
+	}
+	if n.Value != nil {
+		n.Value = edit(n.Value).(Node)
+	}
+}
+
 func (n *SliceExpr) Format(s fmt.State, verb rune) { fmtNode(n, s, verb) }
 func (n *SliceExpr) copy() Node {
 	c := *n

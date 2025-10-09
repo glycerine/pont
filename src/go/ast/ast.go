@@ -664,6 +664,20 @@ type (
 		Value Expr
 	}
 
+	// A SendStmtFinal node represents a final-send statement.
+	SendStmtFinal struct {
+		Chan  Expr
+		Arrow token.Pos // position of "<#"
+		Value Expr
+	}
+
+	// A SendStmtSticky node represents a sticky-send statement.
+	SendStmtSticky struct {
+		Chan  Expr
+		Arrow token.Pos // position of "<$"
+		Value Expr
+	}
+
 	// An IncDecStmt node represents an increment or decrement statement.
 	IncDecStmt struct {
 		X      Expr
@@ -791,6 +805,8 @@ func (s *EmptyStmt) Pos() token.Pos      { return s.Semicolon }
 func (s *LabeledStmt) Pos() token.Pos    { return s.Label.Pos() }
 func (s *ExprStmt) Pos() token.Pos       { return s.X.Pos() }
 func (s *SendStmt) Pos() token.Pos       { return s.Chan.Pos() }
+func (s *SendStmtFinal) Pos() token.Pos  { return s.Chan.Pos() }
+func (s *SendStmtSticky) Pos() token.Pos { return s.Chan.Pos() }
 func (s *IncDecStmt) Pos() token.Pos     { return s.X.Pos() }
 func (s *AssignStmt) Pos() token.Pos     { return s.Lhs[0].Pos() }
 func (s *GoStmt) Pos() token.Pos         { return s.Go }
@@ -815,9 +831,11 @@ func (s *EmptyStmt) End() token.Pos {
 	}
 	return s.Semicolon + 1 /* len(";") */
 }
-func (s *LabeledStmt) End() token.Pos { return s.Stmt.End() }
-func (s *ExprStmt) End() token.Pos    { return s.X.End() }
-func (s *SendStmt) End() token.Pos    { return s.Value.End() }
+func (s *LabeledStmt) End() token.Pos    { return s.Stmt.End() }
+func (s *ExprStmt) End() token.Pos       { return s.X.End() }
+func (s *SendStmt) End() token.Pos       { return s.Value.End() }
+func (s *SendStmtFinal) End() token.Pos  { return s.Value.End() }
+func (s *SendStmtSticky) End() token.Pos { return s.Value.End() }
 func (s *IncDecStmt) End() token.Pos {
 	return s.TokPos + 2 /* len("++") */
 }
@@ -877,6 +895,8 @@ func (*EmptyStmt) stmtNode()      {}
 func (*LabeledStmt) stmtNode()    {}
 func (*ExprStmt) stmtNode()       {}
 func (*SendStmt) stmtNode()       {}
+func (*SendStmtFinal) stmtNode()  {}
+func (*SendStmtSticky) stmtNode() {}
 func (*IncDecStmt) stmtNode()     {}
 func (*AssignStmt) stmtNode()     {}
 func (*GoStmt) stmtNode()         {}

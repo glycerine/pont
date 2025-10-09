@@ -303,6 +303,21 @@ redo:
 			s.tok = _Arrow
 			break
 		}
+		if s.ch == '$' {
+			s.nextch()
+			s.tok = _StickyArrow
+			break
+		}
+		if s.ch == '#' {
+			s.nextch()
+			s.tok = _FinalArrow
+			break
+		}
+		if s.ch == '|' {
+			s.nextch()
+			s.tok = _PipeArrow
+			break
+		}
 		s.op, s.prec = Lss, precCmp
 		s.tok = _Operator
 

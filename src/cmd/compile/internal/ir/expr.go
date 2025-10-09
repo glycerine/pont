@@ -768,7 +768,7 @@ func (n *UnaryExpr) SetOp(op Op) {
 	switch op {
 	default:
 		panic(n.no("SetOp " + op.String()))
-	case OBITNOT, ONEG, ONOT, OPLUS, ORECV,
+	case OBITNOT, ONEG, ONOT, OPLUS, ORECV, ORECV_STICKY, ORECV_PIPE,
 		OCAP, OCLEAR, OCLOSE, OIMAG, OLEN, ONEW, OPANIC, OREAL,
 		OCHECKNIL, OCFUNC, OIDATA, OITAB, OSPTR,
 		OUNSAFESTRINGDATA, OUNSAFESLICEDATA:
@@ -979,7 +979,7 @@ func Reassigned(name *Name) bool {
 			if isName(n.X) && n != name.Defn {
 				return true
 			}
-		case OAS2, OAS2FUNC, OAS2MAPR, OAS2DOTTYPE, OAS2RECV, OSELRECV2:
+		case OAS2, OAS2FUNC, OAS2MAPR, OAS2DOTTYPE, OAS2RECV, OSELRECV2, OAS2RECV_STICKY, OSELRECV2_STICKY, OAS2RECV_PIPE, OSELRECV2_PIPE:
 			n := n.(*AssignListStmt)
 			for _, p := range n.Lhs {
 				if isName(p) && n != name.Defn {

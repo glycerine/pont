@@ -13,6 +13,15 @@ import (
 	"unsafe"
 )
 
+var simulationMode bool
+
+// SetSimulationMode (jea added) caches runtime.simulationMode.
+// Users should not call it. It is only public so that
+// the runtime/rand.go code can set it once at startup.
+func SetSimulationMode() {
+	simulationMode = true
+}
+
 // This package contains the implementation of Go's builtin map type.
 //
 // The map design is based on Abseil's "Swiss Table" map design
@@ -266,7 +275,11 @@ func NewMap(mt *abi.MapType, hint uintptr, m *Map, maxAlloc uintptr) *Map {
 		m = new(Map)
 	}
 
-	m.seed = uintptr(rand())
+	if simulationMode {
+		m.seed = 0
+	} else {
+		m.seed = uintptr(rand())
+	}
 
 	if hint <= abi.MapGroupSlots {
 		// A small map can fill all 8 slots, so no need to increase
@@ -330,7 +343,11 @@ func NewMap(mt *abi.MapType, hint uintptr, m *Map, maxAlloc uintptr) *Map {
 
 func NewEmptyMap() *Map {
 	m := new(Map)
-	m.seed = uintptr(rand())
+	if simulationMode {
+		m.seed = 0
+	} else {
+		m.seed = uintptr(rand())
+	}
 	// See comment in NewMap. No need to eager allocate a group.
 	return m
 }
@@ -675,7 +692,11 @@ func (m *Map) Delete(typ *abi.MapType, key unsafe.Pointer) {
 		// Reset the hash seed to make it more difficult for attackers
 		// to repeatedly trigger hash collisions. See
 		// https://go.dev/issue/25237.
-		m.seed = uintptr(rand())
+		if simulationMode {
+			m.seed = 0
+		} else {
+			m.seed = uintptr(rand())
+		}
 	}
 
 	if m.writing == 0 {
@@ -762,7 +783,11 @@ func (m *Map) Clear(typ *abi.MapType) {
 
 	// Reset the hash seed to make it more difficult for attackers to
 	// repeatedly trigger hash collisions. See https://go.dev/issue/25237.
-	m.seed = uintptr(rand())
+	if simulationMode {
+		m.seed = 0
+	} else {
+		m.seed = uintptr(rand())
+	}
 
 	if m.writing == 0 {
 		fatal("concurrent map writes")

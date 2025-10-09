@@ -1389,6 +1389,22 @@ func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
 		p.print(token.ARROW, blank)
 		p.expr0(s.Value, depth)
 
+	case *ast.SendStmtFinal:
+		const depth = 1
+		p.expr0(s.Chan, depth)
+		p.print(blank)
+		p.setPos(s.Arrow)
+		p.print(token.FINAL_ARROW, blank)
+		p.expr0(s.Value, depth)
+
+	case *ast.SendStmtSticky:
+		const depth = 1
+		p.expr0(s.Chan, depth)
+		p.print(blank)
+		p.setPos(s.Arrow)
+		p.print(token.STICKY_ARROW, blank)
+		p.expr0(s.Value, depth)
+
 	case *ast.IncDecStmt:
 		const depth = 1
 		p.expr0(s.X, depth+1)
