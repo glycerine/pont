@@ -539,6 +539,12 @@ func (p *printer) printRawNode(n Node) {
 	case *SendStmt:
 		p.print(n.Chan, blank, _Arrow, blank, n.Value)
 
+	case *SendStmtFinal:
+		p.print(n.Chan, blank, _FinalArrow, blank, n.Value)
+
+	case *SendStmtSticky:
+		p.print(n.Chan, blank, _StickyArrow, blank, n.Value)
+
 	case *AssignStmt:
 		p.print(n.Lhs)
 		if n.Rhs == nil {

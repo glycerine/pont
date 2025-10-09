@@ -189,6 +189,7 @@ func usleep(usec uint32) {
 }
 
 func readRandom(r []byte) int {
+	throw("wasip1 readRandom should not be called use GO_DSIM_SEED to seed runtime")
 	if random_get(&r[0], size(len(r))) != 0 {
 		return 0
 	}

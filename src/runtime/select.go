@@ -205,6 +205,10 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 
 	// sort the cases by Hchan address to get the locking order.
 	// simple heap sort, to guarantee n log n time and constant stack footprint.
+	// TODO(jea): notice this introduces non-determinism since sorting
+	// by pointer, and thus we altered sortkey() to be atomic by first arrival;
+	// which hopefully has more (if not perfect) determinism especially
+	// when GOMAXPROCS is 1.
 	for i := range lockorder {
 		j := i
 		// Start with the pollorder to permute cases on the same channel.
@@ -462,12 +466,18 @@ bufrecv:
 	if cas.elem != nil {
 		typedmemmove(c.elemtype, cas.elem, qp)
 	}
-	typedmemclr(c.elemtype, qp)
-	c.recvx++
-	if c.recvx == c.dataqsiz {
-		c.recvx = 0
+	// implement <- receive of sticky in select
+	// implement <~ receive of sticky in select ((jea)TODO how can isStickyRecv be set? probably need another place to mark sudog receive as sticky. or mark the case (cas) as a sticky receive)
+	const isStickyRecv = false
+
+	if c.sticky == 0 || c.sticky-1 != c.recvx || isStickyRecv {
+		typedmemclr(c.elemtype, qp)
+		c.recvx++
+		if c.recvx == c.dataqsiz {
+			c.recvx = 0
+		}
+		c.qcount--
 	}
-	c.qcount--
 	selunlock(scases, lockorder)
 	goto retc
 
@@ -494,7 +504,8 @@ bufsend:
 
 recv:
 	// can receive from sleeping sender (sg)
-	recv(c, sg, cas.elem, func() { selunlock(scases, lockorder) }, 2)
+	const notStickyRecv = false // (jea) is this always the case?
+	recv(c, sg, cas.elem, func() { selunlock(scases, lockorder) }, 2, notStickyRecv)
 	if debugSelect {
 		print("syncrecv: cas0=", cas0, " c=", c, "\n")
 	}
@@ -506,7 +517,13 @@ rclose:
 	selunlock(scases, lockorder)
 	recvOK = false
 	if cas.elem != nil {
-		typedmemclr(c.elemtype, cas.elem)
+		if c.sticky != 0 && c.sticky-1 == c.recvx {
+			// implement receive of sticky in select, for closed chan.
+			qp = chanbuf(c, c.recvx)
+			typedmemmove(c.elemtype, cas.elem, qp)
+		} else {
+			typedmemclr(c.elemtype, cas.elem)
+		}
 	}
 	if raceenabled {
 		raceacquire(c.raceaddr())
@@ -543,7 +560,9 @@ sclose:
 }
 
 func (c *hchan) sortkey() uintptr {
-	return uintptr(unsafe.Pointer(c))
+	// jea experiment: can we sort on something else
+	return c.determkey
+	//return uintptr(unsafe.Pointer(c))
 }
 
 // A runtimeSelect is a single case passed to rselect.

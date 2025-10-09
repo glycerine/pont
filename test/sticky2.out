@@ -1,0 +1,45 @@
+about to do regulary ch <- 0 which will bump out the sticky
+about ch <- 1
+about ch <- 2
+about ch <$ 3
+done with ch <$ 3    about to <-ch read back
+i=0 ...  v=0, ok=true
+i=1 ...  v=1, ok=true
+i=2 ...  v=2, ok=true
+i=3 ...  v=3, ok=true
+i=4 ...  v=3, ok=true
+about to do regulary ch <- 0 which will bump out the sticky
+about ch <- 1
+about ch <- 2
+about ch <$ 6
+done with ch <$ 6    about to <-ch read back
+i=0 ...  v=0, ok=true
+i=1 ...  v=1, ok=true
+i=2 ...  v=2, ok=true
+i=3 ...  v=6, ok=true
+i=4 ...  v=6, ok=true
+about to do regulary ch <- 0 which will bump out the sticky
+about ch <- 1
+about ch <- 2
+about ch <$ 9
+done with ch <$ 9    about to <-ch read back
+i=0 ...  v=0, ok=true
+i=1 ...  v=1, ok=true
+i=2 ...  v=2, ok=true
+i=3 ...  v=9, ok=true
+i=4 ...  v=9, ok=true
+check replacement of sticky at front
+done with sticky at front test
+check replacement of sticky not at front.
+called clear(ch).
+about to ch <- 1
+back from ch <- 1
+about to ch <- 2
+back from ch <- 2
+about to ch <$ 88
+back from ch <$ 88
+about to ch <$ 3 which should hit sticky replacement...
+back from ch <$ 3
+on i = 1, see v = 1
+on i = 2, see v = 2
+on i = 3, see v = 3

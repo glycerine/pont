@@ -128,6 +128,9 @@ const (
 	additional_beg
 	// additional tokens, handled in an ad-hoc manner
 	TILDE
+	STICKY_ARROW // <$
+	PIPE_ARROW   // <|
+	FINAL_ARROW  // <#
 	additional_end
 )
 
@@ -231,6 +234,10 @@ var tokens = [...]string{
 	VAR:    "var",
 
 	TILDE: "~",
+
+	STICKY_ARROW: "<$",
+	PIPE_ARROW:   "<|",
+	FINAL_ARROW:  "<#",
 }
 
 // String returns the string corresponding to the token tok.
@@ -305,7 +312,11 @@ func (tok Token) IsLiteral() bool { return literal_beg < tok && tok < literal_en
 // IsOperator returns true for tokens corresponding to operators and
 // delimiters; it returns false otherwise.
 func (tok Token) IsOperator() bool {
-	return (operator_beg < tok && tok < operator_end) || tok == TILDE
+	return (operator_beg < tok && tok < operator_end) ||
+		tok == TILDE ||
+		tok == STICKY_ARROW ||
+		tok == PIPE_ARROW ||
+		tok == FINAL_ARROW
 }
 
 // IsKeyword returns true for tokens corresponding to keywords;

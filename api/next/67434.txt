@@ -1,0 +1,1 @@
+pkg runtime, func InSimulationMode() bool #67434

@@ -333,9 +333,14 @@ func (ffa *funcFlagsAnalyzer) nodeVisitPost(n ir.Node) {
 		// Not important.
 	case ir.ODCLFUNC, ir.ORECOVER, ir.OAS, ir.OAS2, ir.OAS2FUNC, ir.OASOP,
 		ir.OPRINTLN, ir.OPRINT, ir.OLABEL, ir.OCALLINTER, ir.ODEFER,
-		ir.OSEND, ir.ORECV, ir.OSELRECV2, ir.OGO, ir.OAPPEND, ir.OAS2DOTTYPE,
-		ir.OAS2MAPR, ir.OGETG, ir.ODELETE, ir.OINLMARK, ir.OAS2RECV,
+		ir.OSEND, ir.OSEND_FINAL, ir.OSEND_STICKY,
+		ir.ORECV, ir.ORECV_STICKY, ir.ORECV_PIPE,
+		ir.OSELRECV2, ir.OSELRECV2_STICKY, ir.OSELRECV2_PIPE,
+		ir.OGO, ir.OAPPEND, ir.OAS2DOTTYPE,
+		ir.OAS2MAPR, ir.OGETG, ir.ODELETE, ir.OINLMARK,
+		ir.OAS2RECV, ir.OAS2RECV_STICKY, ir.OAS2RECV_PIPE,
 		ir.OMIN, ir.OMAX, ir.OMAKE, ir.OGETCALLERSP:
+
 		// these should all be benign/uninteresting
 	case ir.OTAILCALL, ir.OJUMPTABLE, ir.OTYPESW:
 		// don't expect to see these at all.

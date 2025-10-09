@@ -186,6 +186,14 @@ func Walk(v Visitor, node Node) {
 		Walk(v, n.Chan)
 		Walk(v, n.Value)
 
+	case *SendStmtFinal:
+		Walk(v, n.Chan)
+		Walk(v, n.Value)
+
+	case *SendStmtSticky:
+		Walk(v, n.Chan)
+		Walk(v, n.Value)
+
 	case *IncDecStmt:
 		Walk(v, n.X)
 

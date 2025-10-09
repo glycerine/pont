@@ -176,6 +176,14 @@ func walk(v *visitor, ek edge.Kind, index int, node ast.Node) {
 		walk(v, edge.SendStmt_Chan, -1, n.Chan)
 		walk(v, edge.SendStmt_Value, -1, n.Value)
 
+	case *ast.SendStmtSticky:
+		walk(v, edge.SendStmt_Chan, -1, n.Chan)
+		walk(v, edge.SendStmt_Value, -1, n.Value)
+
+	case *ast.SendStmtFinal:
+		walk(v, edge.SendStmt_Chan, -1, n.Chan)
+		walk(v, edge.SendStmt_Value, -1, n.Value)
+
 	case *ast.IncDecStmt:
 		walk(v, edge.IncDecStmt_X, -1, n.X)
 

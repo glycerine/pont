@@ -1069,6 +1069,9 @@ func subprocessHash(t *testing.T, env string) uintptr {
 //
 // Regression test for https://go.dev/issue/66885.
 func TestMemHashGlobalSeed(t *testing.T) {
+	if runtime.InSimulationMode() {
+		t.Skip("skip under simulationMode")
+	}
 	if os.Getenv("GO_TEST_SUBPROCESS_HASH") != "" {
 		fmt.Println(computeHash())
 		os.Exit(0)

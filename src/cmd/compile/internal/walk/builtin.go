@@ -148,6 +148,8 @@ func walkClear(n *ir.UnaryExpr, init *ir.Nodes) ir.Node {
 		return ir.NewBlockStmt(n.Pos(), nil)
 	case typ.IsMap():
 		return mapClear(x, reflectdata.TypePtrAt(x.Pos(), typ))
+	case typ.IsChan():
+		return mkcall1(chanfn("clearchan", 1, typ), nil, init, x)
 	}
 	panic("unreachable")
 }
@@ -237,6 +239,9 @@ func walkCopy(n *ir.BinaryExpr, init *ir.Nodes, runtimecall bool) ir.Node {
 
 // walkDelete walks an ODELETE node.
 func walkDelete(init *ir.Nodes, n *ir.CallExpr) ir.Node {
+	if n.Args[0].Type().IsChan() {
+		return walkDeleteChan(init, n)
+	}
 	init.Append(ir.TakeInit(n)...)
 	map_ := n.Args[0]
 	key := n.Args[1]
@@ -247,6 +252,11 @@ func walkDelete(init *ir.Nodes, n *ir.CallExpr) ir.Node {
 	fast := mapfast(t)
 	key = mapKeyArg(fast, n, key, false)
 	return mkcall1(mapfndel(mapdelete[fast], t), nil, init, reflectdata.DeleteMapRType(base.Pos, n), map_, key)
+}
+
+func walkDeleteChan(init *ir.Nodes, n *ir.CallExpr) ir.Node {
+	ch := n.Args[0]
+	return mkcall1(chanfn("deletechan", 1, ch.Type()), nil, init, ch)
 }
 
 // walkLenCap walks an OLEN or OCAP node.

@@ -295,14 +295,16 @@ func delete1() {
 	var m map[string]int
 	var s string
 	delete() // ERROR "not enough arguments"
-	delete(1) // ERROR "not enough arguments"
-	delete(1, 2, 3) // ERROR "too many arguments"
+	delete(1 /* ERROR "not a map or channel" */)
+	delete(1 /* ERROR "not a map or channel" */, 2, 3) 
 	delete(m, 0 /* ERROR "cannot use" */)
 	delete(m, s)
 	_ = delete /* ERROR "used as value" */ (m, s)
 
 	var t []map[string]string
 	delete(t... /* ERROR "invalid use of ..." */ )
+
+	delete(make(chan bool))
 }
 
 func delete2() {

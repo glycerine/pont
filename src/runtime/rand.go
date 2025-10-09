@@ -10,6 +10,7 @@ import (
 	"internal/byteorder"
 	"internal/chacha8rand"
 	"internal/goarch"
+	"internal/runtime/maps"
 	"math/bits"
 	"unsafe"
 	_ "unsafe" // for go:linkname
@@ -33,6 +34,11 @@ var globalRand struct {
 
 var readRandomFailed bool
 
+var jeaRandCallGlobalCounter struct {
+	lock mutex
+	n    int
+}
+
 // randinit initializes the global random state.
 // It must be called before any use of grand.
 func randinit() {
@@ -42,6 +48,45 @@ func randinit() {
 	}
 
 	seed := &globalRand.seed
+
+	// GO_DSIM_SEED is a decimal seed stored
+	// into the globalRand.seed in little endian order.
+	// Non decimal-digit ASCII bytes are ignored.
+	// Any seed larger than the max uint64 (1<<64 - 1)
+	// will have digits discarded to avoid overflow
+	// and wrap around.
+	simseed := getEnvEarly("GO_DSIM_SEED=")
+	if simseed != "" {
+		simulationMode = true
+		maps.SetSimulationMode()
+		var n, n2 uint64
+		for _, ch := range []byte(simseed) {
+			switch {
+			case ch == '#' || ch == '/':
+				break // comments terminate
+			case ch < '0' || ch > '9':
+				continue
+			}
+			ch -= '0'
+			n2 = n*10 + uint64(ch)
+			if n2 > n {
+				n = n2
+			} else {
+				break // no overflow
+			}
+		}
+		simulationModeSeed = n
+		for i := range 8 {
+			// little endian fill
+			seed[i] = byte(n >> (i * 8))
+		}
+		//println("#goj simulationModeSeed from GO_DSIM_SEED=", simulationModeSeed)
+		globalRand.state.Init(*seed)
+		globalRand.init = true
+		unlock(&globalRand.lock)
+		return
+	}
+
 	if len(startupRand) >= 16 &&
 		// Check that at least the first two words of startupRand weren't
 		// cleared by any libc initialization.
@@ -147,10 +192,15 @@ func bootstrapRandReseed() {
 }
 
 // rand32 is uint32(rand()), called from compiler-generated code.
-//
-//go:nosplit
 func rand32() uint32 {
 	return uint32(rand())
+}
+
+func JeaRandCallCounter() (m int) {
+	lock(&jeaRandCallGlobalCounter.lock)
+	m = jeaRandCallGlobalCounter.n
+	unlock(&jeaRandCallGlobalCounter.lock)
+	return
 }
 
 // rand returns a random uint64 from the per-m chacha8 state.
@@ -158,7 +208,6 @@ func rand32() uint32 {
 //
 // Do not change signature: used via linkname from other packages.
 //
-//go:nosplit
 //go:linkname rand
 func rand() uint64 {
 	// Note: We avoid acquirem here so that in the fast path
@@ -166,6 +215,17 @@ func rand() uint64 {
 	// The performance difference on a 16-core AMD is
 	// 3.7ns/call this way versus 4.3ns/call with acquirem (+16%).
 	mp := getg().m
+
+	//lock(&jeaRandCallGlobalCounter.lock)
+	//m := jeaRandCallGlobalCounter.n + 1
+	//jeaRandCallGlobalCounter.n = m
+	//unlock(&jeaRandCallGlobalCounter.lock)
+	// if m > 2000 {
+	// 	println("at m == ", m)
+	// 	m = 0
+	// 	println("at m == ", 0/m) // panic and view stack
+	// }
+
 	c := &mp.chacha8
 	for {
 		// Note: c.Next is marked nosplit,
@@ -190,8 +250,13 @@ func maps_rand() uint64 {
 // mrandinit initializes the random state of an m.
 func mrandinit(mp *m) {
 	var seed [4]uint64
-	for i := range seed {
-		seed[i] = bootstrapRand()
+	if simulationMode {
+		seed[0] = simulationModeSeed
+	} else {
+		// Normal random initialization
+		for i := range seed {
+			seed[i] = bootstrapRand()
+		}
 	}
 	bootstrapRandReseed() // erase key we just extracted
 	mp.chacha8.Init64(seed)
@@ -202,7 +267,6 @@ func mrandinit(mp *m) {
 // randn is like rand() % n but faster.
 // Do not change signature: used via linkname from other packages.
 //
-//go:nosplit
 //go:linkname randn
 func randn(n uint32) uint32 {
 	// See https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
@@ -227,8 +291,10 @@ func randn(n uint32) uint32 {
 // See go.dev/issue/67401.
 //
 //go:linkname cheaprand
-//go:nosplit
 func cheaprand() uint32 {
+	if simulationMode {
+		return uint32(rand())
+	}
 	mp := getg().m
 	// Implement wyrand: https://github.com/wangyi-fudan/wyhash
 	// Only the platform that supports 64-bit multiplication
@@ -269,7 +335,6 @@ func cheaprand() uint32 {
 // See go.dev/issue/67401.
 //
 //go:linkname cheaprand64
-//go:nosplit
 func cheaprand64() int64 {
 	return int64(cheaprandu64() & ^(uint64(1) << 63))
 }
@@ -282,8 +347,10 @@ func cheaprand64() int64 {
 // the rule is that other packages using runtime-provided
 // randomness must always use rand.
 //
-//go:nosplit
 func cheaprandu64() uint64 {
+	if simulationMode {
+		return rand()
+	}
 	// Implement wyrand: https://github.com/wangyi-fudan/wyhash
 	// Only the platform that bits.Mul64 can be lowered
 	// by the compiler should be in this list.
@@ -315,7 +382,6 @@ func cheaprandu64() uint64 {
 // See go.dev/issue/67401.
 //
 //go:linkname cheaprandn
-//go:nosplit
 func cheaprandn(n uint32) uint32 {
 	// See https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
 	return uint32((uint64(cheaprand()) * uint64(n)) >> 32)
@@ -341,4 +407,69 @@ func legacy_fastrandn(n uint32) uint32 {
 //go:linkname legacy_fastrand64 runtime.fastrand64
 func legacy_fastrand64() uint64 {
 	return rand()
+}
+
+// ResetDsimSeed prepares to start a new
+// deterministic simulation. It takes three actions:
+//
+// a) it re-seeds the pseudo random number
+// generators on all M (threads) and globalRand
+// using the supplied n uint64 as the seed;
+//
+// b) it sets GOMAXPROCS = 1 to aim for
+// only a single thread for user goroutines;
+//
+// c) it sets debug.asyncpreemptoff=1 to
+// disable sysmon pre-emption.
+// This last is the same as setting the environment
+// variable GODEBUG=asyncpreemptoff=1
+func ResetDsimSeed(n uint64) {
+
+	stw := stopTheWorldGC(stwGOMAXPROCS) // A
+	allocmLock.lock()                    // B
+	acquirem()                           // C
+	lock(&sched.lock)                    // D
+	lock(&globalRand.lock)               // E
+
+	simulationModeSeed = n
+	simulationMode = true
+
+	var seed [32]byte
+	for i := range 8 {
+		// little endian fill
+		seed[i] = byte(n >> (i * 8))
+	}
+	globalRand.seed = seed
+	globalRand.state.Init(seed)
+	r0, _ := globalRand.state.Next()
+
+	// re-do what mrandinit() did above,
+	// when it was called by mcommoninit() in proc.go.
+	// Commented out because it is redundant now
+	// with the allm for loop below:
+	//mp := getg().m
+	//mp.chacha8.Init(seed)
+	//mp.cheaprand = uint32(r0)
+		mp.cheaprand64 = r0
+
+	// all the other m too
+	for mp := allm; mp != nil; mp = mp.alllink {
+		mp.chacha8.Init(seed)
+		mp.cheaprand = uint32(r0)
+		mp.cheaprand64 = r0
+	}
+
+	// GOMAXPROCS=1 ; see debug.go:70
+	newprocs = 1
+
+	// no pre-emption.
+	if debug.asyncpreemptoff != 1 {
+		debug.asyncpreemptoff = 1
+	}
+
+	unlock(&globalRand.lock) // E
+	unlock(&sched.lock)      // D
+	releasem(getg().m)       // C
+	allocmLock.unlock()      // B
+	startTheWorldGC(stw)     // A
 }

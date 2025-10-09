@@ -98,6 +98,10 @@ assignOK:
 			stmt.SetOp(ir.OAS2MAPR)
 		case ir.ORECV:
 			stmt.SetOp(ir.OAS2RECV)
+		case ir.ORECV_STICKY:
+			stmt.SetOp(ir.OAS2RECV_STICKY)
+		case ir.ORECV_PIPE:
+			stmt.SetOp(ir.OAS2RECV_PIPE)
 		case ir.ODOTTYPE:
 			r := r.(*ir.TypeAssertExpr)
 			stmt.SetOp(ir.OAS2DOTTYPE)
@@ -452,8 +456,18 @@ func tcSelect(sel *ir.SelectStmt) {
 		} else {
 			n := Stmt(ncase.Comm)
 			ncase.Comm = n
-			oselrecv2 := func(dst, recv ir.Node, def bool) {
-				selrecv := ir.NewAssignListStmt(n.Pos(), ir.OSELRECV2, []ir.Node{dst, ir.BlankNode}, []ir.Node{recv})
+			oselrecv2 := func(dst, recv ir.Node, def, sticky, pipe bool) {
+				var selrecv *ir.AssignListStmt
+				if pipe {
+					selrecv = ir.NewAssignListStmt(n.Pos(), ir.OSELRECV2_PIPE, []ir.Node{dst, ir.BlankNode}, []ir.Node{recv})
+
+				} else if sticky {
+					selrecv = ir.NewAssignListStmt(n.Pos(), ir.OSELRECV2_STICKY, []ir.Node{dst, ir.BlankNode}, []ir.Node{recv})
+
+				} else {
+					selrecv = ir.NewAssignListStmt(n.Pos(), ir.OSELRECV2, []ir.Node{dst, ir.BlankNode}, []ir.Node{recv})
+
+				}
 				selrecv.Def = def
 				selrecv.SetTypecheck(1)
 				selrecv.SetInit(n.Init())
@@ -473,6 +487,7 @@ func tcSelect(sel *ir.SelectStmt) {
 
 			case ir.OAS:
 				// convert x = <-c into x, _ = <-c
+				// convert x = <~c into x, _ = <~c
 				// remove implicit conversions; the eventual assignment
 				// will reintroduce them.
 				n := n.(*ir.AssignStmt)
@@ -482,11 +497,12 @@ func tcSelect(sel *ir.SelectStmt) {
 						n.Y = r.X
 					}
 				}
-				if n.Y.Op() != ir.ORECV {
+				yop := n.Y.Op()
+				if yop != ir.ORECV && yop != ir.ORECV_STICKY && yop != ir.ORECV_PIPE {
 					base.ErrorfAt(n.Pos(), errors.InvalidSelectCase, "select assignment must have receive on right hand side")
 					break
 				}
-				oselrecv2(n.X, n.Y, n.Def)
+				oselrecv2(n.X, n.Y, n.Def, yop == ir.ORECV_STICKY, yop == ir.ORECV_PIPE)
 
 			case ir.OAS2RECV:
 				n := n.(*ir.AssignListStmt)
@@ -496,12 +512,38 @@ func tcSelect(sel *ir.SelectStmt) {
 				}
 				n.SetOp(ir.OSELRECV2)
 
+			case ir.OAS2RECV_STICKY:
+				n := n.(*ir.AssignListStmt)
+				if n.Rhs[0].Op() != ir.ORECV_STICKY {
+					base.ErrorfAt(n.Pos(), errors.InvalidSelectCase, "select assignment must have receive on right hand side")
+					break
+				}
+				n.SetOp(ir.OSELRECV2_STICKY)
+
+			case ir.OAS2RECV_PIPE:
+				n := n.(*ir.AssignListStmt)
+				if n.Rhs[0].Op() != ir.ORECV_PIPE {
+					base.ErrorfAt(n.Pos(), errors.InvalidSelectCase, "select assignment must have receive on right hand side")
+					break
+				}
+				n.SetOp(ir.OSELRECV2_PIPE)
+
 			case ir.ORECV:
 				// convert <-c into _, _ = <-c
 				n := n.(*ir.UnaryExpr)
-				oselrecv2(ir.BlankNode, n, false)
+				oselrecv2(ir.BlankNode, n, false, false, false)
 
-			case ir.OSEND:
+			case ir.ORECV_STICKY:
+				// convert <~c into _, _ = <~c
+				n := n.(*ir.UnaryExpr)
+				oselrecv2(ir.BlankNode, n, false, true, false)
+
+			case ir.ORECV_PIPE:
+				// convert <| c into _, _ = <| c
+				n := n.(*ir.UnaryExpr)
+				oselrecv2(ir.BlankNode, n, false, false, true)
+
+			case ir.OSEND, ir.OSEND_FINAL, ir.OSEND_STICKY:
 				break
 			}
 		}
@@ -528,6 +570,58 @@ func tcSend(n *ir.SendStmt) ir.Node {
 
 	if !t.ChanDir().CanSend() {
 		base.Errorf("invalid operation: %v (send to receive-only type %v)", n, t)
+		return n
+	}
+
+	n.Value = AssignConv(n.Value, t.Elem(), "send")
+	if n.Value.Type() == nil {
+		return n
+	}
+	return n
+}
+
+// tcSendFinal typechecks an OSEND_FINAL node.
+func tcSendFinal(n *ir.SendStmtFinal) ir.Node {
+	n.Chan = Expr(n.Chan)
+	n.Value = Expr(n.Value)
+	n.Chan = DefaultLit(n.Chan, nil)
+	t := n.Chan.Type()
+	if t == nil {
+		return n
+	}
+	if !t.IsChan() {
+		base.Errorf("invalid operation: %v (final-send to non-chan type %v)", n, t)
+		return n
+	}
+
+	if !t.ChanDir().CanSend() {
+		base.Errorf("invalid operation: %v (final-send to receive-only type %v)", n, t)
+		return n
+	}
+
+	n.Value = AssignConv(n.Value, t.Elem(), "send")
+	if n.Value.Type() == nil {
+		return n
+	}
+	return n
+}
+
+// tcSendSticky typechecks an OSEND_STICKY node.
+func tcSendSticky(n *ir.SendStmtSticky) ir.Node {
+	n.Chan = Expr(n.Chan)
+	n.Value = Expr(n.Value)
+	n.Chan = DefaultLit(n.Chan, nil)
+	t := n.Chan.Type()
+	if t == nil {
+		return n
+	}
+	if !t.IsChan() {
+		base.Errorf("invalid operation: %v (sticky-send to non-chan type %v)", n, t)
+		return n
+	}
+
+	if !t.ChanDir().CanSend() {
+		base.Errorf("invalid operation: %v (sticky-send to receive-only type %v)", n, t)
 		return n
 	}
 

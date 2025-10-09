@@ -51,7 +51,7 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 			default:
 				base.Fatalf("select %v", n.Op())
 
-			case ir.OSEND:
+			case ir.OSEND, ir.OSEND_FINAL, ir.OSEND_STICKY:
 				// already ok
 
 			case ir.OSELRECV2:
@@ -61,6 +61,24 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 					break
 				}
 				r.SetOp(ir.OAS2RECV)
+
+			case ir.OSELRECV2_STICKY:
+				r := n.(*ir.AssignListStmt)
+				if ir.IsBlank(r.Lhs[0]) && ir.IsBlank(r.Lhs[1]) {
+					n = r.Rhs[0]
+					break
+				}
+				r.SetOp(ir.OAS2RECV_STICKY)
+				r.StickyRecv = true
+
+			case ir.OSELRECV2_PIPE:
+				r := n.(*ir.AssignListStmt)
+				if ir.IsBlank(r.Lhs[0]) && ir.IsBlank(r.Lhs[1]) {
+					n = r.Rhs[0]
+					break
+				}
+				r.SetOp(ir.OAS2RECV_PIPE)
+				r.PipeRecv = true
 			}
 
 			l = append(l, n)
@@ -87,12 +105,37 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 			n.Value = typecheck.NodAddr(n.Value)
 			n.Value = typecheck.Expr(n.Value)
 
+		case ir.OSEND_STICKY:
+			n := n.(*ir.SendStmtSticky)
+			n.Value = typecheck.NodAddr(n.Value)
+			n.Value = typecheck.Expr(n.Value)
+
+		case ir.OSEND_FINAL:
+			n := n.(*ir.SendStmtFinal)
+			n.Value = typecheck.NodAddr(n.Value)
+			n.Value = typecheck.Expr(n.Value)
+
 		case ir.OSELRECV2:
 			n := n.(*ir.AssignListStmt)
 			if !ir.IsBlank(n.Lhs[0]) {
 				n.Lhs[0] = typecheck.NodAddr(n.Lhs[0])
 				n.Lhs[0] = typecheck.Expr(n.Lhs[0])
 			}
+		case ir.OSELRECV2_STICKY:
+			n := n.(*ir.AssignListStmt)
+			if !ir.IsBlank(n.Lhs[0]) {
+				n.Lhs[0] = typecheck.NodAddr(n.Lhs[0])
+				n.Lhs[0] = typecheck.Expr(n.Lhs[0])
+			}
+			cas.StickyRecv = true
+
+		case ir.OSELRECV2_PIPE:
+			n := n.(*ir.AssignListStmt)
+			if !ir.IsBlank(n.Lhs[0]) {
+				n.Lhs[0] = typecheck.NodAddr(n.Lhs[0])
+				n.Lhs[0] = typecheck.Expr(n.Lhs[0])
+			}
+			cas.PipeRecv = true
 		}
 	}
 
@@ -118,7 +161,19 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 			ch := n.Chan
 			cond = mkcall1(chanfn("selectnbsend", 2, ch.Type()), types.Types[types.TBOOL], r.PtrInit(), ch, n.Value)
 
-		case ir.OSELRECV2:
+		case ir.OSEND_FINAL:
+			// if selectnbsendStickyFinal(c, v) { body } else { default body }
+			n := n.(*ir.SendStmtFinal)
+			ch := n.Chan
+			cond = mkcall1(chanfn("selectnbsendStickyFinal", 2, ch.Type()), types.Types[types.TBOOL], r.PtrInit(), ch, n.Value)
+
+		case ir.OSEND_STICKY:
+			// if selectnbsendSticky(c, v) { body } else { default body }
+			n := n.(*ir.SendStmtSticky)
+			ch := n.Chan
+			cond = mkcall1(chanfn("selectnbsendSticky", 2, ch.Type()), types.Types[types.TBOOL], r.PtrInit(), ch, n.Value)
+
+		case ir.OSELRECV2, ir.OSELRECV2_STICKY, ir.OSELRECV2_PIPE:
 			n := n.(*ir.AssignListStmt)
 			recv := n.Rhs[0].(*ir.UnaryExpr)
 			ch := recv.X
@@ -127,7 +182,16 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 				elem = typecheck.NodNil()
 			}
 			cond = typecheck.TempAt(base.Pos, ir.CurFunc, types.Types[types.TBOOL])
-			fn := chanfn("selectnbrecv", 2, ch.Type())
+			var fn ir.Node
+			if n.Op() == ir.OSELRECV2_PIPE {
+				fn = chanfn("selectnbrecvPipe", 2, ch.Type())
+
+			} else if n.Op() == ir.OSELRECV2_STICKY {
+				fn = chanfn("selectnbrecvSticky", 2, ch.Type())
+
+			} else {
+				fn = chanfn("selectnbrecv", 2, ch.Type())
+			}
 			call := mkcall1(fn, fn.Type().ResultsTuple(), r.PtrInit(), elem, ch)
 			as := ir.NewAssignListStmt(r.Pos(), ir.OAS2, []ir.Node{cond, n.Lhs[1]}, []ir.Node{call})
 			r.PtrInit().Append(typecheck.Stmt(as))
@@ -192,6 +256,22 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 			recv := n.Rhs[0].(*ir.UnaryExpr)
 			c = recv.X
 			elem = n.Lhs[0]
+		case ir.OSELRECV2_STICKY:
+			n := n.(*ir.AssignListStmt)
+			nrecvs++
+			i = ncas - nrecvs
+			recv := n.Rhs[0].(*ir.UnaryExpr)
+			c = recv.X
+			elem = n.Lhs[0]
+			cas.StickyRecv = true
+		case ir.OSELRECV2_PIPE:
+			n := n.(*ir.AssignListStmt)
+			nrecvs++
+			i = ncas - nrecvs
+			recv := n.Rhs[0].(*ir.UnaryExpr)
+			c = recv.X
+			elem = n.Lhs[0]
+			cas.PipeRecv = true
 		}
 
 		casorder[i] = cas
@@ -237,7 +317,7 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 	dispatch := func(cond ir.Node, cas *ir.CommClause) {
 		var list ir.Nodes
 
-		if n := cas.Comm; n != nil && n.Op() == ir.OSELRECV2 {
+		if n := cas.Comm; n != nil && (n.Op() == ir.OSELRECV2 || n.Op() == ir.OSELRECV2_STICKY || n.Op() == ir.OSELRECV2_PIPE) {
 			n := n.(*ir.AssignListStmt)
 			if !ir.IsBlank(n.Lhs[1]) {
 				x := ir.NewAssignStmt(base.Pos, n.Lhs[1], recvOK)

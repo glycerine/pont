@@ -78,11 +78,15 @@ var OpNames = []string{
 	ORANGE:            "range",
 	OREAL:             "real",
 	ORECV:             "<-",
+	ORECV_STICKY:      "<~",
+	ORECV_PIPE:        "<|",
 	ORECOVER:          "recover",
 	ORETURN:           "return",
 	ORSH:              ">>",
 	OSELECT:           "select",
 	OSEND:             "<-",
+	OSEND_FINAL:       "<$",
+	OSEND_STICKY:      "<~",
 	OSUB:              "-",
 	OSWITCH:           "switch",
 	OUNSAFEADD:        "unsafe.Add",
@@ -242,6 +246,8 @@ var OpPrec = []int{
 	OADDR:             7,
 	ODEREF:            7,
 	ORECV:             7,
+	ORECV_STICKY:      7,
+	ORECV_PIPE:        7,
 	OMUL:              6,
 	ODIV:              6,
 	OMOD:              6,
@@ -260,33 +266,37 @@ var OpPrec = []int{
 	OGT:               4,
 	ONE:               4,
 	OSEND:             3,
+	OSEND_FINAL:       3,
+	OSEND_STICKY:      3,
 	OANDAND:           2,
 	OOROR:             1,
 
 	// Statements handled by stmtfmt
-	OAS:         -1,
-	OAS2:        -1,
-	OAS2DOTTYPE: -1,
-	OAS2FUNC:    -1,
-	OAS2MAPR:    -1,
-	OAS2RECV:    -1,
-	OASOP:       -1,
-	OBLOCK:      -1,
-	OBREAK:      -1,
-	OCASE:       -1,
-	OCONTINUE:   -1,
-	ODCL:        -1,
-	ODEFER:      -1,
-	OFALL:       -1,
-	OFOR:        -1,
-	OGOTO:       -1,
-	OIF:         -1,
-	OLABEL:      -1,
-	OGO:         -1,
-	ORANGE:      -1,
-	ORETURN:     -1,
-	OSELECT:     -1,
-	OSWITCH:     -1,
+	OAS:             -1,
+	OAS2:            -1,
+	OAS2DOTTYPE:     -1,
+	OAS2FUNC:        -1,
+	OAS2MAPR:        -1,
+	OAS2RECV:        -1,
+	OAS2RECV_STICKY: -1,
+	OAS2RECV_PIPE:   -1,
+	OASOP:           -1,
+	OBLOCK:          -1,
+	OBREAK:          -1,
+	OCASE:           -1,
+	OCONTINUE:       -1,
+	ODCL:            -1,
+	ODEFER:          -1,
+	OFALL:           -1,
+	OFOR:            -1,
+	OGOTO:           -1,
+	OIF:             -1,
+	OLABEL:          -1,
+	OGO:             -1,
+	ORANGE:          -1,
+	ORETURN:         -1,
+	OSELECT:         -1,
+	OSWITCH:         -1,
 
 	OEND: 0,
 }
@@ -360,7 +370,7 @@ func stmtFmt(n Node, s fmt.State) {
 
 		fmt.Fprintf(s, "%v %v= %v", n.X, n.AsOp, n.Y)
 
-	case OAS2, OAS2DOTTYPE, OAS2FUNC, OAS2MAPR, OAS2RECV:
+	case OAS2, OAS2DOTTYPE, OAS2FUNC, OAS2MAPR, OAS2RECV, OAS2RECV_STICKY, OAS2RECV_PIPE:
 		n := n.(*AssignListStmt)
 		if n.Def && !complexinit {
 			fmt.Fprintf(s, "%.v := %.v", n.Lhs, n.Rhs)
@@ -783,7 +793,7 @@ func exprFmt(n Node, s fmt.State, prec int) {
 		n := n.(*MakeExpr)
 		fmt.Fprintf(s, "makeslicecopy(%v, %v, %v)", n.Type(), n.Len, n.Cap)
 
-	case OPLUS, ONEG, OBITNOT, ONOT, ORECV:
+	case OPLUS, ONEG, OBITNOT, ONOT, ORECV, ORECV_STICKY, ORECV_PIPE:
 		// Unary
 		n := n.(*UnaryExpr)
 		fmt.Fprintf(s, "%v", n.Op())
@@ -839,6 +849,18 @@ func exprFmt(n Node, s fmt.State, prec int) {
 		n := n.(*SendStmt)
 		exprFmt(n.Chan, s, nprec)
 		fmt.Fprintf(s, " <- ")
+		exprFmt(n.Value, s, nprec+1)
+
+	case OSEND_FINAL:
+		n := n.(*SendStmtFinal)
+		exprFmt(n.Chan, s, nprec)
+		fmt.Fprintf(s, " <$ ")
+		exprFmt(n.Value, s, nprec+1)
+
+	case OSEND_STICKY:
+		n := n.(*SendStmtSticky)
+		exprFmt(n.Chan, s, nprec)
+		fmt.Fprintf(s, " <~ ")
 		exprFmt(n.Value, s, nprec+1)
 
 	case OADDSTR:

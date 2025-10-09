@@ -1,0 +1,3 @@
+good, on 3rd recv, got a=3, open=false; len is now 1
+about to try the read after final auto-close.
+got to end!

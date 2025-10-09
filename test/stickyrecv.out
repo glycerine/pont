@@ -1,0 +1,4 @@
+good: caught expected panic on sticky-receive on closed channel
+good: caught expected panic on sticky-receive on closed channel.
+good: caught expected panic on sticky-receive on closed channel.
+got to end!

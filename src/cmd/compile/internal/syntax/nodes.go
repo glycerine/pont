@@ -385,6 +385,16 @@ type (
 		simpleStmt
 	}
 
+	SendStmtFinal struct {
+		Chan, Value Expr // Chan <# Value
+		simpleStmt
+	}
+
+	SendStmtSticky struct {
+		Chan, Value Expr // Chan <$ Value
+		simpleStmt
+	}
+
 	DeclStmt struct {
 		DeclList []Decl
 		stmt

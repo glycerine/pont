@@ -159,6 +159,8 @@ var stmts = []test{
 	{"ExprStmt", `append@(s, 1, 2, 3)`},
 
 	{"SendStmt", `ch @<- x`},
+	{"SendStmtFinal", `ch @<# x`},
+	{"SendStmtSticky", `ch @<$ x`},
 
 	{"DeclStmt", `@const x = 0`},
 	{"DeclStmt", `@const (x = 0)`},

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	//"cmd/compile/internal/base" // (jea)TODO remove
 )
 
 const debug = false
@@ -917,8 +918,14 @@ func (p *parser) unaryExpr() Expr {
 			return x
 		}
 
-	case _Arrow:
-		// receive op (<-x) or receive-only channel (<-chan E)
+	case _Arrow, _StickyArrow, _PipeArrow: // receives or receive-only type
+		// receive op (<-x) or receive-only channel (<-chan E);
+		// or sticky receive op (<# x); or pipe-receive (<| x).
+
+		regular := (_Arrow == p.tok)
+		sticky := (_StickyArrow == p.tok)
+		pipe := (_PipeArrow == p.tok)
+
 		pos := p.pos()
 		p.next()
 
@@ -939,7 +946,7 @@ func (p *parser) unaryExpr() Expr {
 		//   <-(chan E)   =>  (<-chan E)
 		//   <-(chan<-E)  =>  (<-chan (<-E))
 
-		if _, ok := x.(*ChanType); ok {
+		if _, ok := x.(*ChanType); ok && regular {
 			// x is a channel type => re-associate <-
 			dir := SendOnly
 			t := x
@@ -970,7 +977,16 @@ func (p *parser) unaryExpr() Expr {
 		// x is not a channel type => we have a receive op
 		o := new(Operation)
 		o.pos = pos
-		o.Op = Recv
+
+		//base.Warn("parser.go unaryExpr, _Arrow/_StickyArrow: sticky = %v\n", sticky)
+
+		if sticky {
+			o.Op = RecvSticky
+		} else if pipe {
+			o.Op = RecvPipe
+		} else {
+			o.Op = Recv
+		}
 		o.X = x
 		return o
 	}
@@ -2147,7 +2163,7 @@ func (p *parser) badExpr() *BadExpr {
 // ----------------------------------------------------------------------------
 // Statements
 
-// SimpleStmt = EmptyStmt | ExpressionStmt | SendStmt | IncDecStmt | Assignment | ShortVarDecl .
+// SimpleStmt = EmptyStmt | ExpressionStmt | SendStmt | SendStmtFinal | SendStmtSticky |IncDecStmt | Assignment | ShortVarDecl .
 func (p *parser) simpleStmt(lhs Expr, keyword token) SimpleStmt {
 	if trace {
 		defer p.trace("simpleStmt")()
@@ -2182,8 +2198,26 @@ func (p *parser) simpleStmt(lhs Expr, keyword token) SimpleStmt {
 			return p.newAssignStmt(pos, op, lhs, nil)
 
 		case _Arrow:
-			// lhs <- rhs
+			// lhs <- rhs (for _Arrow)
 			s := new(SendStmt)
+			s.pos = pos
+			p.next()
+			s.Chan = lhs
+			s.Value = p.expr()
+			return s
+
+		case _FinalArrow:
+			// lhs <# rhs (for _FinalArrow)
+			s := new(SendStmtFinal)
+			s.pos = pos
+			p.next()
+			s.Chan = lhs
+			s.Value = p.expr()
+			return s
+
+		case _StickyArrow:
+			// lhs <$ rhs (for _StickyArrow)
+			s := new(SendStmtSticky)
 			s.pos = pos
 			p.next()
 			s.Chan = lhs
@@ -2648,7 +2682,7 @@ func (p *parser) stmtOrNil() Stmt {
 
 	case _Literal, _Func, _Lparen, // operands
 		_Lbrack, _Struct, _Map, _Chan, _Interface, // composite types
-		_Arrow: // receive operator
+		_Arrow, _StickyArrow, _PipeArrow, _FinalArrow: // receive operator
 		return p.simpleStmt(nil, 0)
 
 	case _For:

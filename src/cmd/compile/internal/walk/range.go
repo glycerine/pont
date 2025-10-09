@@ -282,7 +282,7 @@ func walkRange(nrange *ir.RangeStmt) ir.Node {
 
 		nfor.Cond = ir.NewBinaryExpr(base.Pos, ir.ONE, hb, ir.NewBool(base.Pos, false))
 		lhs := []ir.Node{hv1, hb}
-		rhs := []ir.Node{ir.NewUnaryExpr(base.Pos, ir.ORECV, ha)}
+		rhs := []ir.Node{ir.NewUnaryExpr(base.Pos, ir.ORECV, ha)} // note that we never want to inject automatically an ir.ORECV_STICKY or ir.ORECV_PIPE into a range.
 		a := ir.NewAssignListStmt(base.Pos, ir.OAS2RECV, lhs, rhs)
 		a.SetTypecheck(1)
 		nfor.Cond = ir.InitExpr([]ir.Node{a}, nfor.Cond)

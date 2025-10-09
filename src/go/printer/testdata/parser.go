@@ -1303,6 +1303,13 @@ func (p *parser) parseUnaryExpr(lhs bool) ast.Expr {
 		x := p.parseUnaryExpr(false)
 		return &ast.UnaryExpr{pos, token.ARROW, p.checkExpr(x)}
 
+	case token.STICKY_ARROW:
+		// sticky receive expression; never channel type.
+		pos := p.pos
+		p.next()
+		x := p.parseUnaryExpr(false)
+		return &ast.UnaryExpr{pos, token.STICKY_ARROW, p.checkExpr(x)}
+
 	case token.MUL:
 		// pointer type or unary "*" expression
 		pos := p.pos
@@ -1396,7 +1403,7 @@ func (p *parser) parseSimpleStmt(labelOk bool) ast.Stmt {
 		p.error(x[0].Pos(), "illegal label declaration")
 		return &ast.BadStmt{x[0].Pos(), colon + 1}
 
-	case token.ARROW:
+	case token.ARROW, token.STICKY_ARROW:
 		// send statement
 		arrow := p.pos
 		p.next() // consume "<-"
@@ -1649,7 +1656,7 @@ func (p *parser) parseCommClause() *ast.CommClause {
 	if p.tok == token.CASE {
 		p.next()
 		lhs := p.parseLhsList()
-		if p.tok == token.ARROW {
+		if p.tok == token.ARROW || p.tok == token.STICKY_ARROW {
 			// SendStmt
 			if len(lhs) > 1 {
 				p.errorExpected(lhs[0].Pos(), "1 expression")
@@ -1682,7 +1689,8 @@ func (p *parser) parseCommClause() *ast.CommClause {
 				rhs = lhs[0]
 				lhs = nil // there is no lhs
 			}
-			if x, isUnary := rhs.(*ast.UnaryExpr); !isUnary || x.Op != token.ARROW {
+			if x, isUnary := rhs.(*ast.UnaryExpr); !isUnary ||
+				!(x.Op == token.ARROW || x.Op == token.STICKY_ARROW) {
 				p.errorExpected(rhs.Pos(), "send or receive operation")
 				rhs = &ast.BadExpr{rhs.Pos(), rhs.End()}
 			}
@@ -1802,7 +1810,7 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 		// tokens that may start a top-level expression
 		token.IDENT, token.INT, token.FLOAT, token.CHAR, token.STRING, token.FUNC, token.LPAREN, // operand
 		token.LBRACK, token.STRUCT, // composite type
-		token.MUL, token.AND, token.ARROW, token.ADD, token.SUB, token.XOR: // unary operators
+		token.MUL, token.AND, token.ARROW, token.STICKY_ARROW, token.ADD, token.SUB, token.XOR: // unary operators
 		s = p.parseSimpleStmt(true)
 		// because of the required look-ahead, labeled statements are
 		// parsed by parseSimpleStmt - don't expect a semicolon after

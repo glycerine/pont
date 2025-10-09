@@ -62,9 +62,11 @@ func (n *miniStmt) PtrInit() *Nodes { return &n.init }
 // If Def is true, the assignment is a :=.
 type AssignListStmt struct {
 	miniStmt
-	Lhs Nodes
-	Def bool
-	Rhs Nodes
+	Lhs        Nodes
+	Def        bool
+	Rhs        Nodes
+	StickyRecv bool
+	PipeRecv   bool
 }
 
 func NewAssignListStmt(pos src.XPos, op Op, lhs, rhs []Node) *AssignListStmt {
@@ -80,7 +82,7 @@ func (n *AssignListStmt) SetOp(op Op) {
 	switch op {
 	default:
 		panic(n.no("SetOp " + op.String()))
-	case OAS2, OAS2DOTTYPE, OAS2FUNC, OAS2MAPR, OAS2RECV, OSELRECV2:
+	case OAS2, OAS2DOTTYPE, OAS2FUNC, OAS2MAPR, OAS2RECV, OSELRECV2, OAS2RECV_STICKY, OSELRECV2_STICKY, OAS2RECV_PIPE, OSELRECV2_PIPE:
 		n.op = op
 	}
 }
@@ -204,8 +206,10 @@ func NewCaseStmt(pos src.XPos, list, body []Node) *CaseClause {
 
 type CommClause struct {
 	miniStmt
-	Comm Node // communication case
-	Body Nodes
+	Comm       Node // communication case
+	Body       Nodes
+	StickyRecv bool
+	PipeRecv   bool
 }
 
 func NewCommStmt(pos src.XPos, comm Node, body []Node) *CommClause {
@@ -444,8 +448,22 @@ func NewSelectStmt(pos src.XPos, cases []*CommClause) *SelectStmt {
 	return n
 }
 
-// A SendStmt is a send statement: X <- Y.
+// A SendStmt is a send statement: X <- Y
 type SendStmt struct {
+	miniStmt
+	Chan  Node
+	Value Node
+}
+
+// A SendStmtFinal is a final send statement: X <$ Y
+type SendStmtFinal struct {
+	miniStmt
+	Chan  Node
+	Value Node
+}
+
+// A SendStmtSticky is a sticky send statement: X <~ Y
+type SendStmtSticky struct {
 	miniStmt
 	Chan  Node
 	Value Node
@@ -455,6 +473,20 @@ func NewSendStmt(pos src.XPos, ch, value Node) *SendStmt {
 	n := &SendStmt{Chan: ch, Value: value}
 	n.pos = pos
 	n.op = OSEND
+	return n
+}
+
+func NewSendStmtFinal(pos src.XPos, ch, value Node) *SendStmtFinal {
+	n := &SendStmtFinal{Chan: ch, Value: value}
+	n.pos = pos
+	n.op = OSEND_FINAL
+	return n
+}
+
+func NewSendStmtSticky(pos src.XPos, ch, value Node) *SendStmtSticky {
+	n := &SendStmtSticky{Chan: ch, Value: value}
+	n.pos = pos
+	n.op = OSEND_STICKY
 	return n
 }
 
