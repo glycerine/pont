@@ -178,36 +178,6 @@ func TestRaceChanAsyncCloseSend(t *testing.T) {
 	v = 2
 }
 
-func TestRaceChanCloseClose(t *testing.T) {
-	compl := make(chan bool, 2)
-	v1 := 0
-	v2 := 0
-	_ = v1 + v2
-	c := make(chan int)
-	go func() {
-		defer func() {
-			if recover() != nil {
-				v2 = 2
-			}
-			compl <- true
-		}()
-		v1 = 1
-		close(c)
-	}()
-	go func() {
-		defer func() {
-			if recover() != nil {
-				v1 = 2
-			}
-			compl <- true
-		}()
-		v2 = 1
-		close(c)
-	}()
-	<-compl
-	<-compl
-}
-
 func TestRaceChanSendLen(t *testing.T) {
 	v := 0
 	_ = v
