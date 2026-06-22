@@ -77,6 +77,7 @@ var (
 	BuildModReason         string                  // reason -mod was set, if set by default
 	BuildLinkshared        bool                    // -linkshared flag
 	BuildMSan              bool                    // -msan flag
+	BuildOnethread         bool                    // -onethread flag
 	BuildASan              bool                    // -asan flag
 	BuildCover             bool                    // -cover flag
 	BuildCoverMode         string                  // -covermode flag
@@ -311,11 +312,28 @@ func computeExperiment() {
 
 	// Add build tags based on the experiments in effect.
 	exps := Experiment.Enabled()
+	var toolTags []string
+	for _, tag := range BuildContext.ToolTags {
+		if !strings.HasPrefix(tag, "goexperiment.") {
+			toolTags = append(toolTags, tag)
+		}
+	}
 	expTags := make([]string, 0, len(exps)+len(BuildContext.ToolTags))
 	for _, exp := range exps {
 		expTags = append(expTags, "goexperiment."+exp)
 	}
-	BuildContext.ToolTags = append(expTags, BuildContext.ToolTags...)
+	BuildContext.ToolTags = append(expTags, toolTags...)
+}
+
+// EnableGOEXPERIMENT forces name into the active GOEXPERIMENT setting and
+// recomputes the canonical experiment state and tool tags.
+func EnableGOEXPERIMENT(name string) {
+	if RawGOEXPERIMENT == "" {
+		RawGOEXPERIMENT = name
+	} else {
+		RawGOEXPERIMENT += "," + name
+	}
+	computeExperiment()
 }
 
 // An EnvVar is an environment variable Name=Value.

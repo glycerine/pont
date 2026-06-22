@@ -144,6 +144,10 @@ func cgocall(fn, arg unsafe.Pointer) int32 {
 		racereleasemerge(unsafe.Pointer(&racecgosync))
 	}
 
+	if goexperiment.Onethread {
+		return cgocall_onethread(fn, arg)
+	}
+
 	mp := getg().m
 	mp.ncgocall++
 
@@ -234,6 +238,43 @@ func cgocall(fn, arg unsafe.Pointer) int32 {
 	return errno
 }
 
+// cgocall_onethread calls C on m.g0 without leaving the sole P. The whole
+// runtime is blocked until C returns, which is the intended onethread cgo
+// semantics.
+//
+//go:nosplit
+func cgocall_onethread(fn, arg unsafe.Pointer) int32 {
+	mp := getg().m
+	mp.ncgocall++
+	mp.cgoCallers[0] = 0
+
+	osPreemptExtEnter(mp)
+	mp.incgo = true
+	mp.ncgo++
+
+	errno := asmcgocall(fn, arg)
+
+	mp.incgo = false
+	mp.ncgo--
+	osPreemptExtExit(mp)
+
+	if sys.DITSupported {
+		ditEnabled := sys.DITEnabled()
+		gp := getg()
+		if !gp.ditWanted && ditEnabled {
+			sys.DisableDIT()
+		} else if gp.ditWanted && !ditEnabled {
+			sys.EnableDIT()
+		}
+	}
+
+	KeepAlive(fn)
+	KeepAlive(arg)
+	KeepAlive(mp)
+
+	return errno
+}
+
 // Set or reset the system stack bounds for a callback on sp.
 //
 // Must be nosplit because it is called by needm prior to fully initializing
@@ -311,6 +352,10 @@ func callbackUpdateSystemStack(mp *m, sp uintptr, signal bool) {
 //
 //go:nosplit
 func cgocallbackg(fn, frame unsafe.Pointer, ctxt uintptr) {
+	if goexperiment.Onethread {
+		throw("cgo callback in onethread mode")
+	}
+
 	gp := getg()
 	if gp != gp.m.curg {
 		println("runtime: bad g in cgocallback")

@@ -20,6 +20,7 @@ static void
 _cgo_set_stacklo(G *g)
 {
 	uintptr bounds[2];
+	uintptr oldlo = g->stacklo, oldhi = g->stackhi;
 
 	x_cgo_getstackbound(bounds);
 
@@ -28,6 +29,12 @@ _cgo_set_stacklo(G *g)
 	// Sanity check the results now, rather than getting a
 	// morestack on g0 crash.
 	if (g->stacklo >= g->stackhi) {
+		// Pont onethread installs its own native stack before cgo init.
+		// pthread reports the inherited launcher stack instead.
+		if (oldhi > oldlo && oldhi - oldlo >= (uintptr)(1<<20)) {
+			g->stacklo = oldlo;
+			return;
+		}
 		fprintf(stderr, "runtime/cgo: bad stack bounds: lo=%p hi=%p\n", (void*)(g->stacklo), (void*)(g->stackhi));
 		abort();
 	}

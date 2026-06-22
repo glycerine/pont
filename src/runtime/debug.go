@@ -5,6 +5,7 @@
 package runtime
 
 import (
+	"internal/goexperiment"
 	"internal/runtime/atomic"
 	"unsafe"
 )
@@ -68,8 +69,8 @@ import (
 //
 // [default]: https://go.dev/doc/godebug#default
 func GOMAXPROCS(n int) int {
-	if GOARCH == "wasm" && n > 1 {
-		n = 1 // WebAssembly has no threads yet, so only one CPU is possible.
+	if (GOARCH == "wasm" || goexperiment.Onethread) && n > 1 {
+		n = 1 // WebAssembly and Pont onethread both have only one runtime thread.
 	}
 
 	lock(&sched.lock)

@@ -130,4 +130,7 @@ type Flags struct {
 	// from interleaved key/elem slots (KVKVKVKV) to split key and elem
 	// arrays (KKKKVVVV).
 	MapSplitGroup bool
+
+	// Onethread enables Pont's single-OS-thread runtime mode.
+	Onethread bool
 }

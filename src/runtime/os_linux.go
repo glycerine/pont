@@ -7,6 +7,7 @@ package runtime
 import (
 	"internal/abi"
 	"internal/goarch"
+	"internal/goexperiment"
 	"internal/runtime/atomic"
 	"internal/runtime/syscall/linux"
 	"internal/strconv"
@@ -168,6 +169,10 @@ func clone(flags int32, stk, mp, gp, fn unsafe.Pointer) int32
 //
 //go:nowritebarrier
 func newosproc(mp *m) {
+	if goexperiment.Onethread {
+		throw("newosproc in onethread mode")
+	}
+
 	stk := unsafe.Pointer(mp.g0.stack.hi)
 	/*
 	 * note: strace gets confused if we use CLONE_PTRACE here.
@@ -204,6 +209,11 @@ func newosproc(mp *m) {
 //
 //go:nosplit
 func newosproc0(stacksize uintptr, fn unsafe.Pointer) {
+	if goexperiment.Onethread {
+		writeErrStr("fatal error: newosproc0 in onethread mode\n")
+		exit(1)
+	}
+
 	stack := sysAlloc(stacksize, &memstats.stacks_sys, "OS thread stack")
 	if stack == nil {
 		writeErrStr(failallocatestack)
