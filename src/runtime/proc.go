@@ -170,7 +170,7 @@ func main() {
 	// Allow newproc to start new Ms.
 	mainStarted = true
 
-	if haveSysmon {
+	if haveSysmon && !goexperiment.Onethread {
 		systemstack(func() {
 			newm(sysmon, nil, -1)
 		})
@@ -182,7 +182,9 @@ func main() {
 	// Those can arrange for main.main to run in the main thread
 	// by calling runtime.LockOSThread during initialization
 	// to preserve the lock.
-	lockOSThread()
+	if !goexperiment.Onethread {
+		lockOSThread()
+	}
 
 	if mp != &m0 {
 		throw("runtime.main not on m0")
@@ -203,7 +205,7 @@ func main() {
 	doInit(runtime_inittasks) // Must be before defer.
 
 	// Defer unlock so that runtime.Goexit during init does the unlock too.
-	needUnlock := true
+	needUnlock := !goexperiment.Onethread
 	defer func() {
 		if needUnlock {
 			unlockOSThread()
@@ -211,7 +213,9 @@ func main() {
 	}()
 
 	gcenable()
-	defaultGOMAXPROCSUpdateEnable() // don't STW before runtime initialized.
+	if !goexperiment.Onethread {
+		defaultGOMAXPROCSUpdateEnable() // don't STW before runtime initialized.
+	}
 
 	main_init_done = make(chan bool)
 	if iscgo {
@@ -240,11 +244,14 @@ func main() {
 		}
 		set_crosscall2()
 
-		// Start the template thread in case we enter Go from
-		// a C-created thread and need to create a new thread.
-		startTemplateThread()
+		if !goexperiment.Onethread {
+			// Start the template thread in case we enter Go from
+			// a C-created thread and need to create a new thread.
+			startTemplateThread()
+		}
 		cgocall(_cgo_notify_runtime_init_done, nil)
 	}
+	onethreadCheckCStack()
 
 	// Run the initializing tasks. Depending on build mode this
 	// list can arrive a few different ways, but it will always
@@ -268,7 +275,9 @@ func main() {
 	close(main_init_done)
 
 	needUnlock = false
-	unlockOSThread()
+	if !goexperiment.Onethread {
+		unlockOSThread()
+	}
 
 	if isarchive || islibrary {
 		// A program compiled with -buildmode=c-archive or c-shared
@@ -885,7 +894,13 @@ func schedinit() {
 		gp.racectx, raceprocctx0 = raceinit()
 	}
 
-	sched.maxmcount = 10000
+	if goexperiment.Onethread {
+		sched.maxmcount = 1
+		numCPUStartup = 1
+		debug.asyncpreemptoff = 1
+	} else {
+		sched.maxmcount = 10000
+	}
 	crashFD.Store(^uintptr(0))
 
 	// The world starts stopped.
@@ -921,6 +936,9 @@ func schedinit() {
 		parseRuntimeDebugVars(gogetenv("GODEBUG"))
 	}
 	finishDebugVarsSetup()
+	if goexperiment.Onethread {
+		debug.asyncpreemptoff = 1
+	}
 	gcinit()
 
 	// Allocate stack space that can be used when crashing due to bad stack
@@ -939,12 +957,17 @@ func schedinit() {
 
 	// mcommoninit runs before parsedebugvars, so init profstacks again.
 	mProfStackInit(gp.m)
-	defaultGOMAXPROCSInit()
+	if !goexperiment.Onethread {
+		defaultGOMAXPROCSInit()
+	}
 
 	lock(&sched.lock)
 	sched.lastpoll.Store(nanotime())
 	var procs int32
-	if n, err := strconv.ParseInt(gogetenv("GOMAXPROCS"), 10, 32); err == nil && n > 0 {
+	if goexperiment.Onethread {
+		procs = 1
+		sched.customGOMAXPROCS = true
+	} else if n, err := strconv.ParseInt(gogetenv("GOMAXPROCS"), 10, 32); err == nil && n > 0 {
 		procs = int32(n)
 		sched.customGOMAXPROCS = true
 	} else {
@@ -1977,7 +2000,7 @@ func mstartm0() {
 	// Create an extra M for callbacks on threads not created by Go.
 	// An extra M is also needed on Windows for callbacks created by
 	// syscall.NewCallback. See issue #6751 for details.
-	if (iscgo || GOOS == "windows") && !cgoHasExtraM {
+	if (iscgo || GOOS == "windows") && !cgoHasExtraM && !goexperiment.Onethread {
 		cgoHasExtraM = true
 		newextram()
 	}
@@ -2408,6 +2431,10 @@ func allocm(pp *p, fn func(), id int64) *m {
 //
 //go:nosplit
 func needm(signal bool) {
+	if goexperiment.Onethread {
+		throw("needm in onethread mode")
+	}
+
 	if (iscgo || GOOS == "windows") && !cgoHasExtraM {
 		// Can happen if C/C++ code calls Go from a global ctor.
 		// Can also happen on Windows if a global ctor uses a
@@ -2515,6 +2542,10 @@ func needAndBindM() {
 // It is called with a working local m, so that it can do things
 // like call schedlock and allocate.
 func newextram() {
+	if goexperiment.Onethread {
+		throw("newextram in onethread mode")
+	}
+
 	c := extraMWaiters.Swap(0)
 	if c > 0 {
 		for i := uint32(0); i < c; i++ {
@@ -2528,6 +2559,10 @@ func newextram() {
 
 // oneNewExtraM allocates an m and puts it on the extra list.
 func oneNewExtraM() {
+	if goexperiment.Onethread {
+		throw("oneNewExtraM in onethread mode")
+	}
+
 	// Create extra goroutine locked to extra m.
 	// The goroutine is the context in which the cgo callback will run.
 	// The sched.pc will never be returned to, but setting it to
@@ -2880,6 +2915,10 @@ var newmHandoff struct {
 //
 //go:nowritebarrierrec
 func newm(fn func(), pp *p, id int64) {
+	if goexperiment.Onethread {
+		throw("newm in onethread mode")
+	}
+
 	// allocm adds a new M to allm, but they do not start until created by
 	// the OS in newm1 or the template thread.
 	//
@@ -2929,6 +2968,10 @@ func newm(fn func(), pp *p, id int64) {
 }
 
 func newm1(mp *m) {
+	if goexperiment.Onethread {
+		throw("newm1 in onethread mode")
+	}
+
 	if iscgo {
 		var ts cgothreadstart
 		if _cgo_thread_start == nil {
@@ -2960,6 +3003,9 @@ func newm1(mp *m) {
 func startTemplateThread() {
 	if GOARCH == "wasm" { // no threads on wasm yet
 		return
+	}
+	if goexperiment.Onethread {
+		throw("startTemplateThread in onethread mode")
 	}
 
 	// Disable preemption to guarantee that the template thread will be
@@ -3058,6 +3104,10 @@ func mspinning() {
 //
 //go:nowritebarrierrec
 func startm(pp *p, spinning, lockheld bool) {
+	if goexperiment.Onethread {
+		throw("startm in onethread mode")
+	}
+
 	// Disable preemption.
 	//
 	// Every owned P must have an owner that will eventually stop it in the
@@ -3154,6 +3204,10 @@ func startm(pp *p, spinning, lockheld bool) {
 //
 //go:nowritebarrierrec
 func handoffp(pp *p) {
+	if goexperiment.Onethread {
+		throw("handoffp in onethread mode")
+	}
+
 	// handoffp must start an M in any situation where
 	// findRunnable would return a G to run on pp.
 
@@ -3235,6 +3289,10 @@ func handoffp(pp *p) {
 //
 //go:linkname wakep
 func wakep() {
+	if goexperiment.Onethread {
+		return
+	}
+
 	// Be conservative about spinning threads, only start one if none exist
 	// already.
 	if sched.nmspinning.Load() != 0 || !sched.nmspinning.CompareAndSwap(0, 1) {
@@ -4833,6 +4891,10 @@ func entersyscallHandleGCWait(trace traceLocker) {
 //go:linkname entersyscallblock
 //go:nosplit
 func entersyscallblock() {
+	if goexperiment.Onethread {
+		throw("blocking syscall in onethread mode")
+	}
+
 	gp := getg()
 
 	gp.m.locks++ // see comment in entersyscall
@@ -5918,6 +5980,9 @@ func setcpuprofilerate(hz int32) {
 	// Force sane arguments.
 	if hz < 0 {
 		hz = 0
+	}
+	if goexperiment.Onethread && hz > 0 {
+		throw("CPU profiling is unsupported in onethread mode")
 	}
 
 	// Disable preemption, otherwise we can be rescheduled to another thread

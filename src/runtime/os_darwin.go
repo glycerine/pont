@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"internal/abi"
+	"internal/goexperiment"
 	"internal/stringslite"
 	"unsafe"
 )
@@ -222,6 +223,10 @@ func goenvs() {
 //
 //go:nowritebarrierrec
 func newosproc(mp *m) {
+	if goexperiment.Onethread {
+		throw("newosproc in onethread mode")
+	}
+
 	stk := unsafe.Pointer(mp.g0.stack.hi)
 	if false {
 		print("newosproc stk=", stk, " m=", mp, " g=", mp.g0, " id=", mp.id, " ostk=", &mp, "\n")
@@ -274,6 +279,11 @@ func mstart_stub()
 //
 //go:nosplit
 func newosproc0(stacksize uintptr, fn uintptr) {
+	if goexperiment.Onethread {
+		writeErrStr("fatal error: newosproc0 in onethread mode\n")
+		exit(1)
+	}
+
 	// Initialize an attribute object.
 	var attr pthreadattr
 	var err int32

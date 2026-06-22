@@ -9,6 +9,11 @@
 #include "textflag.h"
 #include "cgo/abi_arm64.h"
 
+#ifdef GOEXPERIMENT_onethread
+#define ONETHREAD_STACK_SIZE 1114112
+#define ONETHREAD_USABLE_STACK 1048576
+#endif
+
 // _rt0_arm64 is common startup code for most arm64 systems when using
 // internal linking. This is the entry point for the program from the
 // kernel for an ordinary -buildmode=exe program. The stack holds the
@@ -105,6 +110,9 @@ GLOBL no_lse_msg<>(SB), RODATA, $64
 TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// SP = stack; R0 = argc; R1 = argv
 
+#ifdef GOEXPERIMENT_onethread
+	MOVD	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), RSP
+#endif
 	SUB	$32, RSP
 	MOVW	R0, 8(RSP) // argc
 	MOVD	R1, 16(RSP) // argv
@@ -134,7 +142,11 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// _cgo_init may update stackguard.
 	MOVD	$runtime·g0(SB), g
 	MOVD	RSP, R7
+#ifdef GOEXPERIMENT_onethread
+	MOVD	$(-ONETHREAD_USABLE_STACK)(R7), R0
+#else
 	MOVD	$(-64*1024)(R7), R0
+#endif
 	MOVD	R0, g_stackguard0(g)
 	MOVD	R0, g_stackguard1(g)
 	MOVD	R0, (g_stack+stack_lo)(g)
@@ -156,6 +168,13 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	SUB	$16, RSP		// reserve 16 bytes for sp-8 where fp may be saved.
 	BL	(R12)
 	ADD	$16, RSP
+
+#ifdef GOEXPERIMENT_onethread
+	MOVD	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), R7
+	MOVD	R7, (g_stack+stack_hi)(g)
+	MOVD	$(-ONETHREAD_USABLE_STACK)(R7), R0
+	MOVD	R0, (g_stack+stack_lo)(g)
+#endif
 
 nocgo:
 	BL	runtime·save_g(SB)
@@ -237,6 +256,10 @@ no_lse:
 
 DATA	runtime·mainPC+0(SB)/8,$runtime·main<ABIInternal>(SB)
 GLOBL	runtime·mainPC(SB),RODATA,$8
+
+#ifdef GOEXPERIMENT_onethread
+GLOBL	onethreadStack<>(SB),NOPTR,$ONETHREAD_STACK_SIZE
+#endif
 
 // Windows ARM64 needs an immediate 0xf000 argument.
 // See go.dev/issues/53837.

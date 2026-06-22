@@ -8,6 +8,11 @@
 #include "textflag.h"
 #include "cgo/abi_amd64.h"
 
+#ifdef GOEXPERIMENT_onethread
+#define ONETHREAD_STACK_SIZE 1114112
+#define ONETHREAD_USABLE_STACK 1048576
+#endif
+
 // _rt0_amd64 is common startup code for most amd64 systems when using
 // internal linking. This is the entry point for the program from the
 // kernel for an ordinary -buildmode=exe program. The stack holds the
@@ -176,6 +181,9 @@ TEXT runtime·rt0_go(SB),NOSPLIT|NOFRAME|TOPFRAME,$0
 	// copy arguments forward on an even stack
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
+#ifdef GOEXPERIMENT_onethread
+	LEAQ	onethreadStack<>+ONETHREAD_STACK_SIZE(SB), SP
+#endif
 	SUBQ	$(5*8), SP		// 3args 2auto
 	ANDQ	$~15, SP
 	MOVQ	AX, 24(SP)
@@ -192,7 +200,11 @@ TEXT runtime·rt0_go(SB),NOSPLIT|NOFRAME|TOPFRAME,$0
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
 	MOVQ	$runtime·g0(SB), DI
+#ifdef GOEXPERIMENT_onethread
+	LEAQ	(-ONETHREAD_USABLE_STACK)(SP), BX
+#else
 	LEAQ	(-64*1024)(SP), BX
+#endif
 	MOVQ	BX, g_stackguard0(DI)
 	MOVQ	BX, g_stackguard1(DI)
 	MOVQ	BX, (g_stack+stack_lo)(DI)
@@ -242,6 +254,14 @@ nocpuinfo:
 	MOVQ	DI, CX // arg 1
 #endif
 	CALL	AX
+
+#ifdef GOEXPERIMENT_onethread
+	MOVQ	$runtime·g0(SB), CX
+	LEAQ	onethreadStack<>+ONETHREAD_STACK_SIZE(SB), AX
+	MOVQ	AX, (g_stack+stack_hi)(CX)
+	LEAQ	(-ONETHREAD_USABLE_STACK)(AX), AX
+	MOVQ	AX, (g_stack+stack_lo)(CX)
+#endif
 
 	// update stackguard after _cgo_init
 	MOVQ	$runtime·g0(SB), CX
@@ -406,6 +426,10 @@ bad_cpu: // show that the program requires a certain microarchitecture level.
 // actual function (not the ABI0 wrapper) is needed by newproc.
 DATA	runtime·mainPC+0(SB)/8,$runtime·main<ABIInternal>(SB)
 GLOBL	runtime·mainPC(SB),RODATA,$8
+
+#ifdef GOEXPERIMENT_onethread
+GLOBL	onethreadStack<>(SB),NOPTR,$ONETHREAD_STACK_SIZE
+#endif
 
 TEXT runtime·breakpoint(SB),NOSPLIT,$0-0
 	BYTE	$0xcc

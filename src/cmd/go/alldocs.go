@@ -194,6 +194,11 @@
 //	-linkshared
 //		build code that will be linked against shared libraries previously
 //		created with -buildmode=shared.
+//	-onethread
+//		build with Pont's single-OS-thread runtime. This implies
+//		GOEXPERIMENT=onethread. The resulting process uses only the initial
+//		OS thread and Pont creates no additional OS threads. Outbound cgo
+//		calls are supported and block the whole Go runtime until C returns.
 //	-mod mode
 //		module download mode to use: readonly, vendor, or mod.
 //		By default, if a vendor directory is present and the go version in go.mod

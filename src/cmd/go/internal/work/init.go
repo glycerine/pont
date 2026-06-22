@@ -47,6 +47,9 @@ func makeCfgChangedEnv() []string {
 	if archenv, val, changed := cfg.GetArchEnv(); changed {
 		env = append(env, archenv+"="+val)
 	}
+	if cfg.CleanGOEXPERIMENT != cfg.Getenv("GOEXPERIMENT") {
+		env = append(env, "GOEXPERIMENT="+cfg.CleanGOEXPERIMENT)
+	}
 	return slices.Clip(env)
 }
 
@@ -57,6 +60,7 @@ func BuildInit(loaderstate *modload.State) {
 	buildInitStarted = true
 	base.AtExit(closeBuilders)
 
+	onethreadInit()
 	modload.Init(loaderstate)
 	instrumentInit()
 	buildModeInit()
@@ -113,6 +117,40 @@ func BuildInit(loaderstate *modload.State) {
 	}
 	if cfg.BuildRace && cfg.BuildCoverMode != "atomic" {
 		base.Fatalf(`-covermode must be "atomic", not %q, when -race is enabled`, cfg.BuildCoverMode)
+	}
+}
+
+func onethreadInit() {
+	if cfg.BuildOnethread {
+		cfg.EnableGOEXPERIMENT("onethread")
+		if cfg.ExperimentErr != nil {
+			base.Fatalf("go: invalid GOEXPERIMENT after -onethread: %v", cfg.ExperimentErr)
+		}
+	}
+	if cfg.ExperimentErr != nil || cfg.Experiment == nil || !cfg.Experiment.Onethread {
+		return
+	}
+
+	switch cfg.Goos {
+	case "darwin", "linux":
+	default:
+		base.Fatalf("go: -onethread is not supported on %s/%s", cfg.Goos, cfg.Goarch)
+	}
+	switch cfg.Goarch {
+	case "amd64", "arm64":
+	default:
+		base.Fatalf("go: -onethread is not supported on %s/%s", cfg.Goos, cfg.Goarch)
+	}
+	if cfg.BuildRace || cfg.BuildMSan || cfg.BuildASan {
+		base.Fatalf("go: -onethread is incompatible with -race, -msan, and -asan")
+	}
+	if cfg.BuildLinkshared {
+		base.Fatalf("go: -onethread is incompatible with -linkshared")
+	}
+	switch cfg.BuildBuildmode {
+	case "default", "exe", "pie", "archive":
+	default:
+		base.Fatalf("go: -onethread is incompatible with -buildmode=%s", cfg.BuildBuildmode)
 	}
 }
 

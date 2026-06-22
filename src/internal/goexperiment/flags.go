@@ -128,4 +128,7 @@ type Flags struct {
 
 	// RuntimeSecret enables the runtime/secret package.
 	RuntimeSecret bool
+
+	// Onethread enables Pont's single-OS-thread runtime mode.
+	Onethread bool
 }

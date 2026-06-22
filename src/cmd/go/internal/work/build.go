@@ -150,6 +150,11 @@ and test commands:
 	-linkshared
 		build code that will be linked against shared libraries previously
 		created with -buildmode=shared.
+	-onethread
+		build with Pont's single-OS-thread runtime. This implies
+		GOEXPERIMENT=onethread. The resulting process uses only the initial
+		OS thread and Pont creates no additional OS threads. Outbound cgo
+		calls are supported and block the whole Go runtime until C returns.
 	-mod mode
 		module download mode to use: readonly, vendor, or mod.
 		By default, if a vendor directory is present and the go version in go.mod
@@ -345,6 +350,7 @@ func AddBuildFlags(cmd *base.Command, mask BuildFlagMask) {
 	cmd.Flag.Var(&load.BuildLdflags, "ldflags", "")
 	cmd.Flag.BoolVar(&cfg.BuildLinkshared, "linkshared", false, "")
 	cmd.Flag.BoolVar(&cfg.BuildMSan, "msan", false, "")
+	cmd.Flag.BoolVar(&cfg.BuildOnethread, "onethread", false, "")
 	cmd.Flag.StringVar(&cfg.BuildPGO, "pgo", "auto", "")
 	cmd.Flag.StringVar(&cfg.BuildPkgdir, "pkgdir", "", "")
 	cmd.Flag.BoolVar(&cfg.BuildRace, "race", false, "")

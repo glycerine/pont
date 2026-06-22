@@ -107,6 +107,10 @@ _cgo_wait_runtime_init_done(void) {
 void _cgo_set_stacklo(G *g, uintptr *pbounds)
 {
 	uintptr bounds[2];
+	uintptr oldlo, oldhi;
+
+	oldlo = g->stacklo;
+	oldhi = g->stackhi;
 
 	// pbounds can be passed in by the caller; see gcc_linux_amd64.c.
 	if (pbounds == NULL) {
@@ -120,6 +124,14 @@ void _cgo_set_stacklo(G *g, uintptr *pbounds)
 	// Sanity check the results now, rather than getting a
 	// morestack on g0 crash.
 	if (g->stacklo >= g->stackhi) {
+		// Pont onethread switches the initial thread onto a Pont-owned
+		// stack before cgo init. In that mode, pthread reports the
+		// inherited launcher stack, which intentionally does not contain
+		// g->stackhi. If Go already installed a large native stack, keep it.
+		if (oldhi > oldlo && oldhi - oldlo >= (uintptr)(1<<20)) {
+			g->stacklo = oldlo;
+			return;
+		}
 		fprintf(stderr, "runtime/cgo: bad stack bounds: lo=%p hi=%p\n", (void*)(g->stacklo), (void*)(g->stackhi));
 		abort();
 	}
