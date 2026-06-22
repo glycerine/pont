@@ -30,10 +30,12 @@ With `GOMAXPROCS=1`, the Go scheduler has one logical processor (`P`), but the r
 For Pont determinism, the hard invariant should be:
 
 ```text
-one process, one Go-created OS thread, one runtime M, one P
+one process, exactly one OS thread total, one runtime M, one P
 ```
 
-The runtime should never create a second OS thread, never rely on a second OS thread to make progress, and never allow OS thread scheduling to influence Go scheduling.
+That one OS thread is the initial thread that enters the Pont program from the kernel/loader. Pont `onethread` must never create, clone, spawn, borrow, or migrate execution to another OS thread, even transiently. The runtime should never rely on a second OS thread to make progress, and never allow OS thread scheduling to influence Go scheduling. In cgo builds, that same initial thread must also be a C-capable thread with a large native stack, with a minimum target of 1 MiB available for calls that run on `m.g0`.
+
+A Pont-owned stack is stack memory for the already-running initial OS thread. It is not a Pont-owned helper thread.
 
 ## 2. Desired Semantics
 
@@ -46,8 +48,11 @@ The runtime should never create a second OS thread, never rely on a second OS th
 - the runtime starts no template thread.
 - the runtime starts no cgo extra M.
 - the runtime starts no replacement M for syscall handoff.
+- the runtime creates no OS threads at all after process entry, even temporarily.
 - async signal-based preemption is disabled.
-- cgo is disabled or rejected.
+- outbound cgo calls from Go to C are supported, with the whole runtime blocked until C returns.
+- the sole cgo-capable thread has at least a 1 MiB native/g0 stack, or the program fails at startup.
+- cgo callbacks from C-created threads are initially rejected.
 - race/MSan/ASan are rejected.
 - plugin/shared/c-archive/c-shared modes are initially rejected.
 - blocking syscall paths are rejected in strict mode.
@@ -322,7 +327,8 @@ Strict mode:
 
 - allows nonblocking netpoll-backed I/O
 - allows quick syscalls that do not call `entersyscallblock`
-- rejects cgo
+- allows outbound cgo calls, accepting that the entire runtime is blocked while C runs
+- rejects cgo callbacks from C-created threads
 - rejects `entersyscallblock`
 - rejects foreign-thread callbacks
 
@@ -400,6 +406,133 @@ func OneThread() bool
 ```
 
 But this is not needed initially, and adding API has long-term compatibility cost.
+
+## 4.9 Cgo Policy
+
+Outbound cgo calls should be supported in `onethread`.
+
+There are two very different cgo cases:
+
+```text
+Go goroutine -> C function -> returns to same Go goroutine
+```
+
+and:
+
+```text
+C-created thread -> exported Go callback
+```
+
+The first case is compatible with a single-thread runtime if Pont accepts that the whole Go runtime is blocked while C executes. This is the desired model for deterministic native code that calls `malloc`, `free`, `mmap`, `munmap`, custom allocators, compression libraries, numerical kernels, or other leaf-like native code.
+
+The second case is not compatible with the strict invariant without additional machinery, because the callback arrives on a thread not owned by the Go runtime. Standard Go handles this with cgo extra Ms. Pont `onethread` should reject this initially.
+
+So the v1 cgo policy should be:
+
+- allow outbound Go-to-C calls
+- allow C to block the entire runtime
+- allow C to allocate memory outside the Go heap
+- allow C to call OS APIs such as `malloc`, `free`, `mmap`, and `munmap`
+- reject C code that creates OS threads, where Pont can detect or interpose it
+- reject C-created threads entering Go
+- reject exported Go callbacks unless they occur synchronously on the same cgo call stack and can be proven not to require an extra M
+- reject `-buildmode=c-archive` and `-buildmode=c-shared` initially
+- reject race/MSan/ASan with `onethread`
+
+Important stack note: normal cgo still switches from the goroutine stack to `m.g0` using `asmcgocall`. Single-threaded execution removes the need to create a replacement M while C runs, but it does not automatically remove the stack switch. C expects a stable system stack with platform ABI conventions; Go goroutine stacks can grow and move and have Go stack maps. A later `fastcgo` path may be possible for annotated `#cgo noescape nocallback` leaf calls, but the first correct implementation should keep `asmcgocall`.
+
+For allocator use cases, this is still useful: the expensive and nondeterministic behavior to remove is the scheduler handoff / replacement-M behavior, not necessarily the g0 stack switch.
+
+Foreign C code that calls `pthread_create`, `clone`, `clone3`, or platform equivalents violates the process-level `onethread` contract even if that thread never calls back into Go. Pont should fail fast where practical, for example with link-time wrappers around `pthread_create` in externally linked cgo binaries and runtime/linker diagnostics for known thread-creating modes. Direct raw thread-creation syscalls from arbitrary foreign code cannot be made deterministic by the Go scheduler; treat them as unsupported.
+
+## 4.10 C Stack Requirement
+
+`onethread` cgo must run on a real native stack large enough for ordinary C code. The target minimum is:
+
+```text
+1 MiB usable native stack for the sole runtime thread
+```
+
+This matters because outbound cgo does not run C code on a growable goroutine stack. On amd64 and arm64, `runtime.asmcgocall` switches from the current goroutine stack to `m.g0` before entering C:
+
+```text
+/usr/local/dev-go/go/src/runtime/asm_amd64.s
+/usr/local/dev-go/go/src/runtime/asm_arm64.s
+```
+
+The startup assembly normally gives `g0` conservative bounds around the process startup stack. In cgo builds, `x_cgo_init` may refine those bounds using pthread stack information:
+
+```text
+/usr/local/dev-go/go/src/runtime/cgo/gcc_linux_amd64.c
+/usr/local/dev-go/go/src/runtime/cgo/gcc_linux_arm64.c
+/usr/local/dev-go/go/src/runtime/cgo/gcc_stack_unix.c
+/usr/local/dev-go/go/src/runtime/cgo/gcc_stack_darwin.c
+/usr/local/dev-go/go/src/runtime/cgo/gcc_libinit.c
+```
+
+`onethread` should not depend on those inherited bounds. It should enforce the stack size by construction.
+
+Recommended construction:
+
+1. Add an `onethread` startup stack memory region for amd64 and arm64 native targets.
+2. Before `rt0_go` installs `runtime.g0` bounds, switch the stack pointer register of the already-running initial OS thread to that memory region.
+3. Install `g0.stack.lo`, `g0.stack.hi`, `g0.stackguard0`, and `g0.stackguard1` from the known Pont-owned stack bounds.
+4. Keep using the same OS thread. Do not call `pthread_create`, `clone`, `newosproc`, or any helper-thread path to get a larger stack.
+5. In cgo init, prevent pthread-derived inherited-stack bounds from replacing the Pont-owned onethread stack bounds.
+6. Keep a runtime assertion after cgo init to prove the construction is still intact.
+
+The ideal stack layout is:
+
+```text
+guard page(s)
+1 MiB usable stack
+small ABI/red-zone/alignment slop
+```
+
+Implementation choices:
+
+- Best: early raw `mmap`/`mprotect` in the platform startup path, switch SP to the mapped stack, and set `g0` bounds to that mapping.
+- Acceptable first implementation: a statically linked, page-aligned `NOPTR` stack region larger than 1 MiB, with `g0` bounds set to a 1 MiB usable window. This is simpler but lacks a true guard page unless the linker/runtime also protects adjacent pages.
+- Not sufficient: merely checking the inherited process stack size and hoping the launcher/linker/ulimit supplied enough.
+
+For Linux and Darwin, the mmap-backed path is the stronger design. It avoids relying on `RLIMIT_STACK`, Mach-O stack-size defaults, shell limits, or host program choices. The initial kernel-provided stack is used only long enough for the same initial OS thread to allocate/select the Pont stack memory and jump its own SP onto it. No second OS thread exists at any point.
+
+The runtime should then assert the invariant after cgo init and before user code:
+
+```go
+const onethreadMinCStack = 1 << 20
+
+func checkOnethreadCStack() {
+        if !goexperiment.Onethread {
+                return
+        }
+        gp := getg()
+        if gp.m != &m0 || gp.m.g0 != &g0 {
+                throw("onethread: runtime did not start on m0/g0")
+        }
+        if gp.m.g0.stack.hi <= gp.m.g0.stack.lo ||
+                gp.m.g0.stack.hi-gp.m.g0.stack.lo < onethreadMinCStack {
+                throw("onethread: constructed C stack smaller than 1 MiB")
+        }
+}
+```
+
+This check should be fatal, but it should not be the primary mechanism. It is an assertion that the startup construction worked.
+
+Platform notes:
+
+- Linux native executables normally get a main-thread stack from `RLIMIT_STACK`, but `onethread` should not rely on that. A Pont-owned stack avoids launcher-dependent behavior.
+- Darwin native executables normally get a large main-thread stack, but `onethread` should not rely on that either.
+- If Pont later supports internal linker stack-size requests, use them only as belt-and-suspenders. The startup stack switch remains the source of truth.
+- If a user embeds Pont with `-buildmode=c-archive` or `-buildmode=c-shared`, the initial thread is owned by the host program. Reject those modes in v1 because Pont cannot guarantee the host stack or host thread count.
+
+Optional linker support:
+
+- on ELF, set a non-zero `PT_GNU_STACK` size where useful, while still respecting that Linux process stack size is ultimately constrained by the host limit;
+- on Mach-O `LC_MAIN`, set the stack size field where the current link path uses `LC_MAIN`;
+- under external linking, pass platform linker flags such as a Darwin stack-size flag only when this does not compromise reproducibility.
+
+These are conveniences. The mandatory behavior is to enter the runtime on a stack Pont owns and sizes.
 
 ## 5. Detailed Implementation Approach
 
@@ -557,8 +690,12 @@ Suggested help text:
 ```text
 -onethread
         build with the single-OS-thread Pont runtime. This implies
-        GOEXPERIMENT=onethread and disables cgo. It is incompatible with
-        -race, -msan, -asan, plugin/shared/c-archive/c-shared build modes.
+        GOEXPERIMENT=onethread. The resulting process uses only the initial
+        OS thread and Pont creates no additional OS threads. Outbound cgo
+        calls are supported and block the whole Go runtime until C returns.
+        It is incompatible with -race, -msan, -asan,
+        plugin/shared/c-archive/c-shared build modes, C-created threads, and
+        cgo callbacks from C-created threads.
 ```
 
 ### 0.5 Normalize `-onethread` into `GOEXPERIMENT=onethread`
@@ -678,7 +815,6 @@ func onethreadInitEarly() {
         if err := cfg.EnableExperiment("onethread"); err != nil {
                 base.Fatal(err)
         }
-        cfg.BuildContext.CgoEnabled = false
 }
 ```
 
@@ -739,21 +875,19 @@ func onethreadInitLate() {
         if cfg.BuildLinkshared {
                 base.Fatalf("-onethread is incompatible with -linkshared")
         }
-        if cfg.BuildContext.CgoEnabled {
-                base.Fatalf("-onethread requires cgo to be disabled")
-        }
 }
 ```
 
 Recommended behavior:
 
-- `go build -onethread` should force `cfg.BuildContext.CgoEnabled = false`.
-- `GOEXPERIMENT=onethread CGO_ENABLED=1 go build` should fail with a clear message.
+- `go build -onethread` should allow `CGO_ENABLED=1`.
+- `GOEXPERIMENT=onethread CGO_ENABLED=1 go build` should also be allowed.
+- `go build -onethread -buildmode=c-archive` and `-buildmode=c-shared` should fail with a clear message.
 
 Why both?
 
-- The flag is user-friendly and can imply the safe default.
-- The raw experiment is lower-level and should not silently override an explicit `CGO_ENABLED=1`.
+- The flag is user-friendly and selects the runtime mode.
+- The raw experiment is lower-level but should still produce the same runtime semantics.
 
 Call order:
 
@@ -1378,7 +1512,22 @@ Specifically:
 
 These must not happen.
 
-### 2.10 Guard `cgocall`
+Also change `mstartm0` so it does not create an extra M just because `iscgo` is true:
+
+```go
+if (iscgo || GOOS == "windows") && !cgoHasExtraM {
+        if goexperiment.Onethread {
+                // Outbound cgo is allowed, but C-created-thread callbacks are not.
+        } else {
+                cgoHasExtraM = true
+                newextram()
+        }
+}
+```
+
+The exact code should keep Windows behavior separate; initial Pont `onethread` should target linux/darwin amd64/arm64 first.
+
+### 2.10 Add an onethread `cgocall` path
 
 File:
 
@@ -1397,15 +1546,132 @@ func cgocall(fn, arg unsafe.Pointer) int32 {
 }
 ```
 
-Add at the top:
+Do not reject `cgocall` in `onethread`. Instead, branch to a cgo path that does not release the P and does not try to let another M run while C is executing:
 
 ```go
 if goexperiment.Onethread {
-        throw("cgocall in onethread mode")
+        return cgocall_onethread(fn, arg)
 }
 ```
 
-This should be unreachable because the go command rejects cgo, but runtime checks are important for direct linkname paths and future regressions.
+Sketch:
+
+```go
+func cgocall_onethread(fn, arg unsafe.Pointer) int32 {
+        if !iscgo {
+                throw("cgocall unavailable")
+        }
+        if fn == nil {
+                throw("cgocall nil")
+        }
+
+        gp := getg()
+        mp := gp.m
+        if mp.p == 0 {
+                throw("onethread cgocall without P")
+        }
+
+        mp.ncgocall++
+        mp.cgoCallers[0] = 0
+
+        // Do not call entersyscall. There is no replacement M.
+        // The whole Go runtime is intentionally stopped until C returns.
+        osPreemptExtEnter(mp)
+        mp.incgo = true
+        mp.ncgo++
+
+        errno := asmcgocall(fn, arg)
+
+        mp.incgo = false
+        mp.ncgo--
+        osPreemptExtExit(mp)
+
+        KeepAlive(fn)
+        KeepAlive(arg)
+        KeepAlive(mp)
+        return errno
+}
+```
+
+This path intentionally changes cgo semantics:
+
+- no `entersyscall`
+- no `exitsyscall`
+- no P handoff
+- no replacement M
+- no Go progress while C runs
+
+The cost is that arbitrary callbacks from C into Go are not supported on this path. Standard `cgocallbackg` assumes it is paired with a `cgocall` that entered syscall state. If C calls back into Go while `cgocall_onethread` is active, Pont should throw with a clear message such as:
+
+```text
+cgo callback in onethread mode
+```
+
+Implementation options:
+
+- require `#cgo nocallback` for cgo calls in `onethread`, and teach `cmd/cgo` to emit a different wrapper or metadata for onethread;
+- allow calls without `#cgo nocallback`, but make `cgocallbackg` throw immediately under `goexperiment.Onethread`;
+- later support same-thread synchronous callbacks by writing a dedicated callback path that does not use extra Ms and does not require syscall/P reacquisition.
+
+Recommended v1:
+
+- support outbound calls;
+- make `cgocallbackg` throw under `goexperiment.Onethread`;
+- document that cgo functions should be annotated with `#cgo nocallback` when possible;
+- add a test proving `malloc`/`free` and `mmap`/`munmap` work from `onethread`.
+
+### 2.11 Construct the 1 MiB C stack
+
+Files:
+
+```text
+/usr/local/dev-go/go/src/runtime/asm_amd64.s
+/usr/local/dev-go/go/src/runtime/asm_arm64.s
+/usr/local/dev-go/go/src/runtime/proc.go
+```
+
+Do not rely on the inherited process stack. In the `GOEXPERIMENT_onethread` startup path, switch the already-running initial OS thread's SP onto Pont-owned stack memory before `rt0_go` publishes `g0` bounds. This is a same-thread stack switch, not creation of another thread.
+
+Preferred implementation:
+
+- add platform-specific early startup helpers for linux/darwin amd64/arm64;
+- allocate `guard + 1 MiB usable + slop` using raw `mmap` on the initial OS thread;
+- protect the low guard region with `mprotect(PROT_NONE)`;
+- switch SP to the top of the usable stack, with ABI alignment;
+- record the stack bounds in runtime globals such as `onethreadStackLo` and `onethreadStackHi`;
+- have `rt0_go` use those globals instead of `SP-64KiB ... SP` when setting `runtime.g0.stack`;
+- after `_cgo_init`, restore/keep those Pont-owned bounds if cgo tried to replace them with pthread's view of the original inherited stack.
+
+Acceptable bootstrap fallback:
+
+- define a page-aligned `NOPTR` static stack region of at least `1 MiB + slop`;
+- switch the initial OS thread's SP to that region before `g0` setup;
+- set `g0` bounds from that region;
+- document the lack of a true guard page until the mmap path is implemented.
+
+Then add an assertion:
+
+```go
+const onethreadMinCStack = 1 << 20
+
+func checkOnethreadCStack() {
+        if !goexperiment.Onethread {
+                return
+        }
+        gp := getg()
+        if gp.m != &m0 || gp.m.g0 != &g0 {
+                throw("onethread: runtime did not start on m0/g0")
+        }
+        if gp.m.g0.stack.hi <= gp.m.g0.stack.lo ||
+                gp.m.g0.stack.hi-gp.m.g0.stack.lo < onethreadMinCStack {
+                throw("onethread: constructed C stack smaller than 1 MiB")
+        }
+}
+```
+
+Call it after `_cgo_init` and before package/user initialization. A good location is in `runtime.main`, after the cgo runtime initialization block and before `doInit` starts user package initialization.
+
+This check should only fail if the construction is broken. It is not the mechanism that obtains the stack.
 
 ## Phase 3: Replace the Native Idle Path
 
@@ -2250,8 +2516,10 @@ stderr '-onethread is incompatible with -msan'
 ! go build -onethread -asan .
 stderr '-onethread is incompatible with -asan'
 
-! env CGO_ENABLED=1 GOEXPERIMENT=onethread go build .
-stderr 'onethread requires cgo to be disabled'
+env CGO_ENABLED=1
+go build -onethread .
+go version -m ./binary
+stdout 'GOEXPERIMENT=.*onethread'
 
 ! go build -onethread -buildmode=plugin .
 stderr '-onethread is incompatible with -buildmode=plugin'
@@ -2392,7 +2660,7 @@ Tests likely needing skips under `goexperiment.onethread`:
 
 - tests that require `GOMAXPROCS > 1`
 - tests that assert multiple threads
-- cgo tests
+- cgo callback tests that require extra Ms or C-created threads
 - race tests
 - async preemption tests
 - CPU profile tests
@@ -2429,9 +2697,11 @@ Document:
 ```text
 -onethread
         Build using Pont's single-OS-thread runtime. The resulting binary
-        forces GOMAXPROCS to 1, disables runtime-created OS helper threads,
-        disables async signal preemption, and rejects cgo, sanitizer, race,
-        plugin, shared, c-archive, and c-shared modes.
+        forces GOMAXPROCS to 1, uses only the initial OS thread, prevents
+        Pont from creating additional OS threads, disables async signal
+        preemption, supports outbound cgo by blocking the whole runtime while
+        C runs, and rejects sanitizer, race, plugin, shared, c-archive,
+        c-shared, C-created threads, and C-created-thread callback modes.
 ```
 
 ### 8.2 Runtime docs
@@ -2449,6 +2719,7 @@ Include:
 - unsupported packages/features
 - blocking syscall policy
 - cgo policy
+- C stack requirement
 - profiler policy
 - recommendation for deterministic time/random/map behavior
 
@@ -2462,7 +2733,8 @@ newosproc in onethread mode
 startm in onethread mode
 handoffp in onethread mode
 blocking syscall in onethread mode
-cgocall in onethread mode
+cgo callback in onethread mode
+onethread: constructed C stack smaller than 1 MiB
 CPU profiling is unsupported in onethread mode
 ```
 
@@ -2494,8 +2766,9 @@ Changes:
 - add flag in `AddBuildFlags`
 - add `cfg.EnableExperiment`
 - normalize `-onethread` before package loading
-- disable cgo for flag form
 - reject incompatible flags
+- keep outbound cgo enabled when `CGO_ENABLED=1`
+- reject c-archive/c-shared/plugin/shared and sanitizer/race modes
 - add command tests
 
 Tests:
@@ -2535,7 +2808,9 @@ Changes:
 - guard `startTemplateThread`
 - guard `startm`
 - guard `handoffp`
-- guard cgo paths
+- guard cgo extra-M and C-created-thread callback paths
+- add onethread outbound `cgocall` path
+- add 1 MiB C stack check
 
 Tests:
 
@@ -2619,7 +2894,7 @@ GOEXPERIMENT=onethread go test ./...
 
 Expect failures in:
 
-- cgo packages
+- cgo callback packages/tests that require C-created threads or extra Ms
 - race-related tests
 - profiling tests
 - tests requiring multiple CPUs
@@ -2720,7 +2995,10 @@ The first complete `-onethread` milestone is done when:
 - timers and `time.Sleep` work
 - channel-heavy goroutine scheduling works
 - basic netpoll-backed networking works or is explicitly marked phase 2
-- cgo/race/MSan/ASan/buildmode incompatibilities fail early
+- race/MSan/ASan/buildmode incompatibilities fail early
+- outbound cgo calls to `malloc`, `free`, `mmap`, and `munmap` work
+- C-created-thread callbacks fail clearly
+- cgo startup verifies at least a 1 MiB C stack
 - blocking syscall paths fail with a clear diagnostic
 - normal non-onethread builds are unaffected
 
@@ -2759,4 +3037,3 @@ GOEXPERIMENT=onethread go test net os
 ```
 
 Only after these pass should Pont attempt broader `all.bash` coverage in onethread mode.
-
