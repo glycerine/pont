@@ -295,6 +295,11 @@ func main() {
 		}
 		return
 	}
+	// Arm the -onethread syscall-stall watchdog if GODEBUG=onethreadwatchdog
+	// is set. Done here, after signals are installed and GODEBUG is parsed,
+	// and before user code runs. No-op otherwise.
+	onethreadArmWatchdog()
+
 	fn := main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
 	fn()
 
@@ -3481,6 +3486,16 @@ top:
 	// required in each loop iteration. Clear it to all GC to collect the
 	// slice.
 	mp.clearAllpSnapshot()
+
+	// Under -onethread, ready any goroutine whose note was woken (e.g.
+	// signal_recv after a signal). This must run on every scheduling decision,
+	// not just when idling: a goroutine busy-spinning in Gosched (such as
+	// os/signal's signalWaitUntilIdle) never reaches the idle path, and would
+	// otherwise starve the cooperative note waiters forever. See
+	// note_onethread.go.
+	if goexperiment.Onethread {
+		onethreadReadyNotes()
+	}
 
 	pp := mp.p.ptr()
 	if sched.gcwaiting.Load() {
