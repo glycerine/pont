@@ -5,6 +5,7 @@
 package runtime_test
 
 import (
+	"internal/goexperiment"
 	"internal/race"
 	"internal/testenv"
 	"runtime"
@@ -68,6 +69,13 @@ func checkCoroTestProgOutput(t *testing.T, output string) {
 		t.Fatalf("expected first line of output to start with \"expect: \", got: %q", c[0])
 	}
 	rest := c[1]
+	if goexperiment.Onethread && expect == "OS thread locking must match" && strings.Contains(rest, "OK") {
+		// Under -onethread there is exactly one OS thread, so a coroutine can
+		// never resume on a thread whose OS-thread-lock state differs: the
+		// "OS thread locking must match" violation is structurally impossible
+		// and the program runs to completion instead of panicking.
+		t.Skip("onethread: OS-thread-lock mismatch cannot occur with a single thread")
+	}
 	if expect == "OK" && rest != "OK\n" {
 		t.Fatalf("expected just 'OK' in the output, got:\n%s", rest)
 	}

@@ -7,6 +7,7 @@
 package runtime
 
 import (
+	"internal/goexperiment"
 	"internal/runtime/atomic"
 	"unsafe"
 )
@@ -115,6 +116,10 @@ func notetsleep(n *note, ns int64) bool {
 // same as runtime·notetsleep, but called on user g (not g0)
 // calls only nosplit functions between entersyscallblock/exitsyscall.
 func notetsleepg(n *note, ns int64) bool {
+	if goexperiment.Onethread {
+		// entersyscallblock would throw under -onethread; wait cooperatively.
+		return notetsleepg_onethread(n, ns)
+	}
 	gp := getg()
 	if gp == gp.m.g0 {
 		throw("notetsleepg on g0")
@@ -126,10 +131,27 @@ func notetsleepg(n *note, ns int64) bool {
 	return ok
 }
 
+// onethreadNoteWoken reports whether a futex-based note has been woken
+// (notewakeup stores a non-zero key32 value).
+func onethreadNoteWoken(n *note) bool {
+	return atomic.Load(key32(&n.key)) != 0
+}
+
+// beforeIdle readies any woken note waiters under -onethread (see
+// note_onethread.go). Write barriers are permitted here, as in the js port's
+// beforeIdle: the M still holds its P at this findRunnable call site.
+//
+//go:yeswritebarrierrec
 func beforeIdle(int64, int64) (*g, bool) {
+	if goexperiment.Onethread {
+		return nil, onethreadScanNotes()
+	}
 	return nil, false
 }
 
+// checkTimeouts is a no-op under -onethread: note waiters are readied from
+// beforeIdle instead, because checkTimeouts runs in no-write-barrier contexts
+// (exitsyscall) where onethreadScanNotes' pointer writes are prohibited.
 func checkTimeouts() {}
 
 //go:nosplit

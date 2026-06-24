@@ -16,6 +16,8 @@
 package os
 
 import (
+	"internal/goexperiment"
+	"internal/poll"
 	"internal/syscall/unix"
 	"runtime"
 	"sync"
@@ -100,6 +102,17 @@ func (p *Process) pidfdWait() (*ProcessState, error) {
 	}
 	defer p.handleTransientRelease()
 
+	if goexperiment.Onethread {
+		// A blocking waitid would freeze the sole OS thread, deadlocking any
+		// goroutines that must run for the child to exit (e.g. os/exec pipe
+		// copiers). Wait for the pidfd to become readable via the runtime
+		// poller instead, so the scheduler keeps running other goroutines.
+		// The reap below then returns immediately.
+		if err := onethreadWaitPidfd(handle); err != nil {
+			return nil, err
+		}
+	}
+
 	var (
 		info   unix.SiginfoChild
 		rusage syscall.Rusage
@@ -120,6 +133,46 @@ func (p *Process) pidfdWait() (*ProcessState, error) {
 		status: info.WaitStatus(),
 		rusage: &rusage,
 	}, nil
+}
+
+// onethreadWaitPidfd blocks the calling goroutine cooperatively, via the
+// runtime network poller, until handle (a pidfd) is readable, i.e. the process
+// has exited and can be reaped without blocking. It is used only under the
+// -onethread runtime, where a blocking waitid on the sole OS thread would
+// prevent any other goroutine from running.
+//
+// A pidfd becomes readable exactly once, when its process exits, so this is a
+// reliable edge for the poller. handle's lifetime is managed by the caller via
+// handleTransient*, so we poll a CLOEXEC dup and never close handle here.
+func onethreadWaitPidfd(handle uintptr) error {
+	dup, err := unix.Fcntl(int(handle), syscall.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return NewSyscallError("fcntl", err)
+	}
+	pfd := poll.FD{Sysfd: dup}
+	if err := pfd.Init("pidfd", true); err != nil {
+		poll.CloseFunc(dup)
+		// The poller could not take the pidfd (e.g. unexpected fd type). Fall
+		// back to a blocking reap rather than failing; correctness over
+		// liveness in this unexpected case.
+		return nil
+	}
+	defer pfd.Close() // closes dup and unregisters it from the poller
+
+	var info unix.SiginfoChild
+	return pfd.RawRead(func(uintptr) bool {
+		// Non-blocking probe. WNOWAIT leaves the zombie waitable so the caller
+		// can do the real reap; WNOHANG makes this never block. info.Pid stays
+		// 0 until the child is in a waitable (exited) state.
+		info.Pid = 0
+		e := ignoringEINTR(func() error {
+			return unix.Waitid(unix.P_PIDFD, int(handle), &info, syscall.WEXITED|syscall.WNOWAIT|syscall.WNOHANG, nil)
+		})
+		if e != nil {
+			return true // stop waiting; let the caller's reap surface the error
+		}
+		return info.Pid != 0
+	})
 }
 
 // pidfdSendSignal sends a signal to the process.
