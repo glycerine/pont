@@ -3817,7 +3817,12 @@ top:
 	// snapshot without a P for the write barrier..
 
 	// Poll network until next timer.
-	if netpollinited() && (netpollAnyWaiters() || pollUntil != 0) && sched.lastpoll.Swap(0) != 0 {
+	//
+	// onethreadHasNoteWaiters keeps the sole thread blocking in
+	// (signal-interruptible) netpoll, rather than parking in notesleep where
+	// signals are ignored, whenever a goroutine is waiting on a note that only
+	// a signal will wake (e.g. signal_recv). See note_onethread.go.
+	if netpollinited() && (netpollAnyWaiters() || pollUntil != 0 || onethreadHasNoteWaiters()) && sched.lastpoll.Swap(0) != 0 {
 		sched.pollUntil.Store(pollUntil)
 		if mp.p != 0 {
 			throw("findRunnable: netpoll with p")
@@ -5710,6 +5715,17 @@ func dolockOSThread() {
 	if GOARCH == "wasm" {
 		return // no threads on wasm yet
 	}
+	if goexperiment.Onethread {
+		// There is exactly one OS thread, and every goroutine already runs on
+		// it, so the lock guarantee ("the calling goroutine will always execute
+		// in that thread") holds by construction. Deliberately do not record
+		// the g<->m binding: it would otherwise drive multi-M machinery
+		// (stoplockedm/startlockedm and the locked-thread kill in gdestroy)
+		// that cannot work with a single thread. The lockedExt/lockedInt
+		// counters are still maintained by the callers for UnlockOSThread
+		// balance and coroutine accounting.
+		return
+	}
 	gp := getg()
 	gp.m.lockedg.set(gp)
 	gp.lockedm.set(gp.m)
@@ -5732,7 +5748,10 @@ func dolockOSThread() {
 //
 //go:nosplit
 func LockOSThread() {
-	if atomic.Load(&newmHandoff.haveTemplateThread) == 0 && GOOS != "plan9" {
+	// Under -onethread there is exactly one OS thread and the runtime never
+	// creates more, so the locked goroutine already runs on the only thread
+	// and there is no need for (and no possibility of) a template thread.
+	if !goexperiment.Onethread && atomic.Load(&newmHandoff.haveTemplateThread) == 0 && GOOS != "plan9" {
 		// If we need to start a new thread from the locked
 		// thread, we need the template thread. Start it now
 		// while we're in a known-good state.

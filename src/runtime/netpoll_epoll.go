@@ -7,6 +7,7 @@
 package runtime
 
 import (
+	"internal/goexperiment"
 	"internal/runtime/atomic"
 	"internal/runtime/syscall/linux"
 	"unsafe"
@@ -124,7 +125,12 @@ retry:
 		}
 		// If a timed sleep was interrupted, just return to
 		// recalculate how long we should sleep now.
-		if waitms > 0 {
+		//
+		// Under -onethread, also return on EINTR from an untimed (waitms < 0)
+		// wait so the sole-thread scheduler can rescan note waiters: a signal
+		// (e.g. one destined for signal_recv) interrupts this epollwait, and
+		// the scheduler's beforeIdle scan must run to ready the waiter.
+		if waitms > 0 || (goexperiment.Onethread && waitms < 0) {
 			return gList{}, 0
 		}
 		goto retry

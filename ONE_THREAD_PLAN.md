@@ -3246,3 +3246,194 @@ All built with `CGO_ENABLED=1 go build -onethread` using the
   case.
 - Give the foreign-thread / raw-C-thread callback a clean fatal diagnostic
   instead of a crash.
+
+## 15. Unbounded Blocking-Syscall Sweep Under `-onethread`
+
+This section records a sweep for *unbounded* blocking syscalls — calls that can
+block the sole OS thread for an unbounded time — and the work to make them
+cooperative so they no longer freeze the runtime. It was motivated by a real
+deadlock: with the toolchain built `-onethread`, `cmd/cgo` hung waiting on
+`gcc` because `os.(*Process).wait` issued a blocking `waitid` on the only
+thread, so the goroutines draining gcc's output pipes could never be scheduled
+(see the `hang.txt` analysis). The toolchain itself should not be `-onethread`
+(plan §0.2), but the same class of bug affects any `-onethread` program, so the
+blocking paths were made cooperative.
+
+### 15.1 Principle
+
+In `-onethread` the only legitimate place the sole thread may block is
+`netpoll(delay)` in the scheduler idle loop, which a timer, a ready pollable fd,
+or a delivered signal wakes. Every other wait must be cooperative: the goroutine
+`gopark`s (so the scheduler runs others and idles in `netpoll`) and is readied
+when its event occurs. A blocking syscall that parks the thread itself is a bug.
+
+### 15.2 Classification
+
+**Already cooperative — no change needed:**
+
+- Network sockets, pipes/FIFOs, terminals, and other pollable fds: opened
+  non-blocking and registered with the runtime poller, so reads/writes
+  `gopark` via `internal/poll` and are serviced by `netpoll`. (This is why, in
+  the original hang, the pipe-drain goroutines were `[runnable]` — already
+  parked on the poller — and only the blocking `waitid` was at fault.)
+- Channels, mutexes, `sync.WaitGroup`, `time.Sleep`, `select`: all `gopark`.
+
+**Fixed by this sweep (were blocking or threw):**
+
+1. **Process wait** (`waitid`/`wait4`). Was a blocking `waitid`. Now
+   poller-backed on Linux: see §15.3.
+2. **`notetsleepg`** (used by `signal_recv` and the profiling-buffer reader).
+   Went through `entersyscallblock`, which throws under `-onethread`. Now a
+   cooperative `gopark`: see §15.4.
+3. **Signal-thread setup** (`ensureSigM` → `LockOSThread` → template thread)
+   and **OS-thread locking** machinery. Threw / handed off Ps. Now handled for
+   a single thread: see §15.4 and §15.5.
+
+**Inherent limitations — documented, not fixed (see §15.6).**
+
+### 15.3 Process wait: poller-backed `pidfdWait`
+
+File: `src/os/pidfd_linux.go`.
+
+A pidfd becomes readable exactly once, when its process exits, which is a clean
+edge for the runtime poller. Under `-onethread`, before the (now non-blocking)
+reap, `pidfdWait` calls `onethreadWaitPidfd(handle)`, which:
+
+- duplicates the pidfd (`F_DUPFD_CLOEXEC`) so `internal/poll` can own/close the
+  dup without touching the os-managed original;
+- wraps the dup in a `poll.FD` (`Init("pidfd", true)`) to register it with the
+  runtime poller;
+- `RawRead`s, probing each readiness with a non-blocking
+  `waitid(P_PIDFD, …, WEXITED|WNOWAIT|WNOHANG)` — `WNOWAIT` leaves the zombie
+  for the caller's real reap, `WNOHANG` never blocks, and `info.Pid != 0` means
+  ready. When not ready, `RawRead` `gopark`s on the poller until the pidfd is
+  readable.
+
+The sole thread is therefore never blocked in `waitid`; other goroutines (e.g.
+`os/exec` pipe copiers) run, the child finishes, the pidfd becomes readable, and
+the waiter wakes. Requires a pidfd-capable kernel (Linux ≥ 5.4); on older
+kernels the non-pidfd `pidWait` path still blocks (rare, documented).
+
+### 15.4 Cooperative `notetsleepg` and signal delivery
+
+Files: `src/runtime/note_onethread.go` (new), `note_onethread_stub.go` (new, for
+js/wasip1), `lock_futex.go`, `lock_sema.go`, `proc.go`, `signal_unix.go`,
+`netpoll_epoll.go`.
+
+`notetsleepg` is how a user goroutine waits on a one-shot note; the only
+production caller under `-onethread` is `signal_recv`, blocking for the next OS
+signal. The cooperative version mirrors the js/wasm port:
+
+- The waiter records `(note, g)` in a small registry and `gopark`s. The wake
+  side is unchanged — `notewakeup` sets the note key (an async-signal-safe
+  atomic store; important because it is called from the signal handler).
+- The scheduler readies waiters whose note key is set from `beforeIdle` (the
+  existing js/wasm hook in `findRunnable`, run before the thread idles in
+  `netpoll`). `beforeIdle` is marked `//go:yeswritebarrierrec` exactly as in the
+  js port — it still holds its P there, so the `goready` write barriers are
+  safe. `checkTimeouts` is *not* used for this (it runs in no-write-barrier
+  contexts like `exitsyscall`); readying from `beforeIdle` suffices for
+  cooperative programs.
+- A gopark commit function rechecks the note key, closing the
+  register-then-wake race without a lost wakeup.
+
+For the "block only on a signal, nothing else runnable" (daemon) case, two more
+pieces ensure the idle thread wakes:
+
+- `proc.go` keeps the idle thread in (signal-interruptible) `netpoll` rather
+  than parking in `notesleep` whenever `onethreadHasNoteWaiters()` is true; and
+- `netpoll_epoll.go` returns on `EINTR` from an untimed wait under `-onethread`,
+  so a delivered signal bounces the scheduler back through `beforeIdle` to
+  rescan. (`onethreadAddNoteWaiter` force-initializes the poller so this path is
+  available even for a program that did no I/O.)
+
+Signal *masks*: `ensureSigM` maintains a dedicated thread with the wanted
+signals unblocked. With one thread there is none to maintain, so under
+`-onethread` `sigenable`/`sigdisable` (`signal_unix.go`) unblock/block the signal
+directly on the sole thread.
+
+### 15.5 OS-thread locking relaxation
+
+Files: `src/runtime/proc.go` (`LockOSThread`, `dolockOSThread`),
+`coro_test.go`.
+
+`runtime.LockOSThread` guarantees the goroutine always runs on its thread. Under
+`-onethread` that holds by construction (one thread), so:
+
+- `LockOSThread` skips `startTemplateThread` (which throws — no helper threads).
+- `dolockOSThread` keeps the `lockedExt`/`lockedInt` counters (for
+  `UnlockOSThread` balance and coroutine accounting) but does **not** record the
+  `g`↔`m` binding. That binding is what drives the multi-M machinery —
+  `stoplockedm`/`startlockedm` (which hand a P to another M, calling the
+  forbidden `handoffp`) and the locked-thread kill in `gdestroy` — none of which
+  can work with one thread. With the binding absent, a locked goroutine that
+  blocks simply lets the sole thread run other goroutines and resumes on it
+  later, and exiting a locked goroutine does not try to kill the thread.
+
+One consequence: `LockOSThread`'s secondary promise that *no other* goroutine
+runs on the thread cannot hold (others must share the sole thread). The
+`TestCoroLockOSThread`/`TestCoroCgoCallback` cases that assert the runtime
+panics with `"OS thread locking must match"` are skipped under `-onethread` in
+`checkCoroTestProgOutput`, because a single thread can never violate that
+invariant — the program correctly completes instead of panicking. The basic
+cgo-callback-in-coroutine cases still run and pass.
+
+### 15.6 Inherent limitations (documented, not fixed)
+
+These cannot be made non-blocking on one thread without violating the invariant
+or are unpollable; they are bounded or rare in practice:
+
+- **Regular file I/O.** Linux cannot epoll regular files, so `read`/`write` on
+  disk files use the fast `entersyscall` path and block the thread for the I/O
+  duration. Bounded by device latency for local disks (not a deadlock); a slow
+  or hung filesystem (NFS) stalls the whole runtime. Standard Go relies on
+  sysmon P-retake here, which `-onethread` lacks.
+- **`flock`/`fcntl(F_SETLKW)`** advisory locks: not pollable; a contended lock
+  blocks the thread. Rare.
+- **Blocking cgo calls** (e.g. the cgo DNS resolver's `getaddrinfo`): by design
+  cgo blocks the whole runtime until C returns (plan §4.9). The pure-Go
+  resolver is poller-backed and unaffected.
+- **Darwin/non-Linux process wait:** the pidfd path is Linux-only; other
+  platforms still use a blocking `wait4`/`waitid`. Linux is the primary target.
+
+### 15.7 Files changed
+
+- `src/os/pidfd_linux.go` — poller-backed `pidfdWait` (`onethreadWaitPidfd`).
+- `src/runtime/note_onethread.go` (new) — cooperative note registry, scan,
+  `notetsleepg_onethread`.
+- `src/runtime/note_onethread_stub.go` (new) — `onethreadHasNoteWaiters` stub
+  for js/wasip1.
+- `src/runtime/lock_futex.go`, `lock_sema.go` — `notetsleepg` onethread branch,
+  `onethreadNoteWoken`, `beforeIdle` scan (`//go:yeswritebarrierrec`).
+- `src/runtime/proc.go` — idle netpoll condition (`onethreadHasNoteWaiters`),
+  `LockOSThread`/`dolockOSThread` relaxation.
+- `src/runtime/signal_unix.go` — direct signal-mask handling in
+  `sigenable`/`sigdisable`.
+- `src/runtime/netpoll_epoll.go` — return on `EINTR` for untimed waits.
+- `src/runtime/coro_test.go` — skip OS-thread-lock-mismatch assertions.
+
+### 15.8 Verification
+
+All `go build -onethread`, Linux/amd64, `go1.26.4-pont-onethread`:
+
+- **Process wait:** a subprocess emitting ~1.3 MB through a `bytes.Buffer`
+  (pipe far over the 64 KB buffer) is captured correctly under `GOMAXPROCS=1`;
+  the pipe drainer runs concurrently with the now-parking wait. Previously this
+  deadlocked. `go test os/exec` passes.
+- **Signals:** `signal.Notify` + self-`SIGUSR1` delivered both while other
+  goroutines are cooperatively active and in the daemon-style "block only on the
+  signal" case (exercising the netpoll/EINTR path). `go test os/signal` passes.
+- **OS-thread locking / cgo coroutines:** `go test runtime -run
+  'TestCoroLockOSThread|TestCoroCgoCallback'` passes (inapplicable
+  lock-mismatch cases skipped; cgo-callback-in-coroutine cases run).
+- **No regression:** `go build std` and the touched `runtime` tests
+  (`TestLockOSThread|TestSignal|TestCoro`) pass in normal (non-onethread) mode;
+  all changes are guarded by the `goexperiment.Onethread` compile-time constant.
+- Runtime compiles for onethread-linux, normal-linux, darwin/arm64, js/wasm,
+  and wasip1.
+
+### 15.9 Follow-ups
+
+- Poller-backed process wait for Darwin (kqueue `EVFILT_PROC`/`NOTE_EXIT`).
+- Optional: a `GODEBUG` to make the inherent blocking paths (regular-file I/O on
+  slow filesystems, `flock`) fail loudly instead of stalling, for diagnosis.

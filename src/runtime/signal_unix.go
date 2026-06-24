@@ -199,9 +199,16 @@ func sigenable(sig uint32) {
 
 	t := &sigtable[sig]
 	if t.flags&_SigNotify != 0 {
-		ensureSigM()
-		enableSigChan <- sig
-		<-maskUpdatedChan
+		if goexperiment.Onethread {
+			// There is only one OS thread and no dedicated signal thread to
+			// maintain. Unblock the signal on the sole thread so the kernel
+			// delivers it here.
+			unblocksig(sig)
+		} else {
+			ensureSigM()
+			enableSigChan <- sig
+			<-maskUpdatedChan
+		}
 		if atomic.Cas(&handlingSig[sig], 0, 1) {
 			atomic.Storeuintptr(&fwdSig[sig], getsig(sig))
 			setsig(sig, abi.FuncPCABIInternal(sighandler))
@@ -224,9 +231,19 @@ func sigdisable(sig uint32) {
 
 	t := &sigtable[sig]
 	if t.flags&_SigNotify != 0 {
-		ensureSigM()
-		disableSigChan <- sig
-		<-maskUpdatedChan
+		if goexperiment.Onethread {
+			// There is only one OS thread; block the signal on it directly
+			// instead of signaling a dedicated signal thread.
+			if blockableSig(sig) {
+				var set sigset
+				sigaddset(&set, int(sig))
+				sigprocmask(_SIG_BLOCK, &set, nil)
+			}
+		} else {
+			ensureSigM()
+			disableSigChan <- sig
+			<-maskUpdatedChan
+		}
 
 		// If initsig does not install a signal handler for a
 		// signal, then to go back to the state before Notify
