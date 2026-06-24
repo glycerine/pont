@@ -837,7 +837,7 @@ func getGodebugEarly() (string, bool) {
 // getEnvEarly extracts the value of an environment variable directly
 // from the raw C environ array, before goenvs() has built the Go
 // envs slice and before the heap is fully usable for general env access.
-// Modeled on getGodebugEarly. Returns "" if not found.
+// It must not allocate. Modeled on getGodebugEarly. Returns "" if not found.
 func getEnvEarly(prefix string) string {
 	// prefix must include the trailing '=', e.g. "GO_DSIM_SEED=".
 	var env string
@@ -851,7 +851,7 @@ func getEnvEarly(prefix string) string {
 			p := argv_index(argv, argc+1+i)
 			s := unsafe.String(p, findnull(p))
 			if stringslite.HasPrefix(s, prefix) {
-				env = gostring(p)[len(prefix):]
+				env = gostringnocopy(p)[len(prefix):]
 				break
 			}
 		}
