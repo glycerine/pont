@@ -353,7 +353,8 @@ func callbackUpdateSystemStack(mp *m, sp uintptr, signal bool) {
 //go:nosplit
 func cgocallbackg(fn, frame unsafe.Pointer, ctxt uintptr) {
 	if goexperiment.Onethread {
-		throw("cgo callback in onethread mode")
+		cgocallbackg_onethread(fn, frame, ctxt)
+		return
 	}
 
 	gp := getg()
@@ -434,6 +435,67 @@ func cgocallbackg(fn, frame unsafe.Pointer, ctxt uintptr) {
 	gp.m.g0.stackguard0 = oldStack.lo + stackGuard
 	gp.m.g0.stackguard1 = gp.m.g0.stackguard0
 	gp.m.g0StackAccurate = oldAccurate
+}
+
+// cgocallbackg_onethread handles a C-to-Go callback under the -onethread
+// runtime, for the only case that is possible there: a synchronous callback
+// that arrives on the sole runtime thread while it is inside an outbound
+// cgocall_onethread (Go -> C -> Go on the same OS thread).
+//
+// Unlike the general cgocallbackg, this path does no scheduler transition at
+// all. cgocall_onethread deliberately never calls entersyscall: it keeps the
+// goroutine in _Grunning and keeps the sole P attached so the single-thread
+// invariant cannot be broken by handoffp/startm. By the time we get here the
+// asm cgocallback (havem path) has already switched g back to m.curg and
+// switched SP onto the goroutine stack, so we are simply resuming Go execution
+// on the same stack we left. Therefore we must NOT exitsyscall (we are not in
+// syscall state), NOT reentersyscall on the way out, NOT lockOSThread (there is
+// only one M; curg cannot migrate), and NOT touch the extra-M machinery (a
+// foreign-thread callback would have taken the needm path in asm, which throws).
+//
+// A foreign C-created thread calling in is the only other case, and it cannot
+// be supported on a single thread; it is rejected earlier in needm.
+//
+// This v1 path supports callbacks that return normally (or recover within the
+// callback). A Go panic that propagates out through the C frames is not yet
+// handled here; cgocallbackg1 installs a deferred unwindm whose accounting
+// assumes the general entersyscall/lockOSThread setup, so panic-through-C must
+// be addressed separately before it can be enabled.
+func cgocallbackg_onethread(fn, frame unsafe.Pointer, ctxt uintptr) {
+	gp := getg()
+	if gp != gp.m.curg {
+		println("runtime: bad g in cgocallback (onethread)")
+		exit(2)
+	}
+
+	// m0 owns a real, sized g0 stack; it is never an extra M, so there is no
+	// estimated-bounds fixup to do (callbackUpdateSystemStack would no-op).
+	mp := gp.m
+	if mp != &m0 || mp.isextra {
+		throw("onethread: cgo callback not on m0")
+	}
+
+	// A function annotated #cgo nocallback must not call back into Go.
+	// Report it as a fatal invariant violation rather than panicking, since
+	// onethread does not yet propagate panics back out through C frames.
+	if gp.nocgocallback {
+		throw("runtime: function marked with #cgo nocallback called back into Go")
+	}
+
+	// Tell async preemption we are leaving external code. These are no-ops on
+	// the linux/darwin targets onethread supports (async preemption is off),
+	// but keep the structure symmetric with cgocall_onethread.
+	osPreemptExtExit(mp)
+
+	// We are running Go again; balance the mp.incgo = true set by
+	// cgocall_onethread. A C frame is still below us, so ncgo stays as is.
+	mp.incgo = false
+
+	cgocallbackg1(fn, frame, ctxt)
+
+	// Going back to the cgo call.
+	mp.incgo = true
+	osPreemptExtEnter(mp)
 }
 
 func cgocallbackg1(fn, frame unsafe.Pointer, ctxt uintptr) {

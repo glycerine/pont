@@ -3037,3 +3037,212 @@ GOEXPERIMENT=onethread go test net os
 ```
 
 Only after these pass should Pont attempt broader `all.bash` coverage in onethread mode.
+
+## 14. Same-Thread Cgo Callbacks (Go → C → Go) Under `-onethread`
+
+This section records the research and the implementation of synchronous cgo
+callbacks under `-onethread`. The v1 plan (§2.10, §4.9) rejected *all* exported
+Go callbacks. That was a deliberate shortcut, not a fundamental limit. The
+same-thread synchronous case is now supported.
+
+### 14.1 Bottom line
+
+Supporting `Go → C → Go` on the same OS thread is not only possible, it is
+*simpler* than standard Go's callback path, not harder. The previous rejection
+in `cgocallbackg` (`src/runtime/cgocall.go`) fell out of one design decision —
+`cgocall_onethread` skips `entersyscall` — not from any need for a second
+thread, an extra M, or a new stack. No new OS thread is required.
+
+The key is to separate the two cgo-callback cases, which the runtime already
+distinguishes in assembly.
+
+### 14.2 Why callbacks "normally" need another thread — and why this case does not
+
+The extra-M / `needm` machinery exists **only** for callbacks that arrive on a
+thread the Go runtime does not own — a C-created thread. The discriminator is
+the TLS `g` register, checked at the top of `cgocallback` in
+`src/runtime/asm_amd64.s`:
+
+```asm
+MOVQ  g(CX), BX
+CMPQ  BX, $0
+JEQ   needm        // g == nil: foreign thread, must borrow an M
+...
+JMP   havem        // g != nil: this thread already has an M, reuse it
+```
+
+For an outbound call, `asmcgocall` sets the TLS `g` to `m.g0` before entering C
+(`MOVQ SI, g(CX)` where `SI = m_g0`). So when C calls back **on the same
+thread**, the `g` register is non-nil → the `havem` path runs → it reuses the
+existing `m0`, switches `g` back to `m.curg`, switches SP to the goroutine's
+saved stack, and calls `cgocallbackg`. **`needm` is never reached.** That is
+exactly the "we are just extending the same stack" intuition, and the asm
+already does the stack switch for free via `gosave_systemstack_switch` (which
+saved `curg.sched.sp/pc/bp` inside `asmcgocall`, independently of any syscall
+state).
+
+So:
+
+- **Foreign-thread callback** (`g == nil` → `needm`): genuinely needs a new
+  M/thread. Correctly unsupportable, and already guarded — `needm` throws in
+  `proc.go`. (And C thread creation is itself banned.)
+- **Same-thread synchronous callback** (`g == g0` → `havem`): needs no new
+  thread. This is the case that is now enabled.
+
+### 14.3 Why it previously threw
+
+Standard `cgocall` wraps the C call in `entersyscall()` / `exitsyscall()`. Those
+exist so that *other Ms* can run goroutines while C blocks: `entersyscall` puts
+`curg` into `_Gsyscall` and releases the P; on a callback, `cgocallbackg` calls
+`exitsyscall()` to reacquire a P, runs the Go code, then `reentersyscall()` to
+release it again before returning to C.
+
+`cgocall_onethread` deliberately omits all of that — it keeps `curg` in
+`_Grunning` and keeps the P attached, because releasing the P is precisely what
+could call `handoffp`/`startm` and break the single-thread invariant. The
+consequence: the entire `cgocallbackg` body is built around an
+`exitsyscall`/`reentersyscall` pairing that never happened, so it could not be
+reused, and it was stubbed to `throw`.
+
+Nothing about the determinism choice actually prevents the callback — it just
+means the existing `cgocallbackg` is the wrong shape. In onethread mode the
+callback is in a *better* starting state than standard Go: `curg` is already
+`_Grunning` and the P is already held. The callback simply needs to run Go code
+and return to C, with no scheduler transition at all.
+
+### 14.4 What was implemented: `cgocallbackg_onethread`
+
+A routing line was added at the top of `cgocallbackg`
+(`src/runtime/cgocall.go`):
+
+```go
+func cgocallbackg(fn, frame unsafe.Pointer, ctxt uintptr) {
+	if goexperiment.Onethread {
+		cgocallbackg_onethread(fn, frame, ctxt)
+		return
+	}
+	...
+}
+```
+
+The onethread version strips the four things that exist only to service
+multi-M scheduling — `exitsyscall`/`reentersyscall`, `lockOSThread`, and the
+extra-M fixups — and toggles only the `incgo` accounting around the actual
+callback dispatch:
+
+```go
+func cgocallbackg_onethread(fn, frame unsafe.Pointer, ctxt uintptr) {
+	gp := getg()
+	if gp != gp.m.curg {
+		println("runtime: bad g in cgocallback (onethread)")
+		exit(2)
+	}
+	mp := gp.m
+	if mp != &m0 || mp.isextra {
+		throw("onethread: cgo callback not on m0")
+	}
+	if gp.nocgocallback {
+		throw("runtime: function marked with #cgo nocallback called back into Go")
+	}
+	osPreemptExtExit(mp)
+	mp.incgo = false          // running Go again; balance cgocall_onethread's incgo = true
+	cgocallbackg1(fn, frame, ctxt)
+	mp.incgo = true           // back to C
+	osPreemptExtEnter(mp)
+}
+```
+
+What is notable:
+
+- **`cgocallbackg1` is reused unchanged.** Walking it confirms it works in
+  onethread: `needextram` is never set (no `needm`), the `<-main_init_done` wait
+  is skipped because `ncgo > 0` here, the profiler check is a no-op (CPU
+  profiling already throws in onethread), and on a normal return `restore=false`
+  so the deferred `unwindm` does nothing.
+- **No assembly changes.** The `havem` path already does the right thing for
+  `m0`.
+- **The foreign-thread case stays rejected** for free — `needm` already throws,
+  so same-thread callbacks work while C-created-thread callbacks fail.
+- `osPreemptExtExit`/`osPreemptExtEnter` are no-ops on the linux/darwin targets
+  (async preemption is off), kept only for structural symmetry with
+  `cgocall_onethread`.
+
+### 14.5 Why this is correct (the subtle points)
+
+1. **GC / write barriers.** Keeping `curg` `_Grunning` across the whole
+   `Go→C→Go` chain is safe *because* there is one M and no sysmon: no other
+   thread can scan or preempt `curg` while the sole M is in C, and when the
+   callback allocates and triggers GC, GC runs on that same M with `curg`
+   genuinely running at a real safepoint. This is the same reasoning that
+   already justifies `cgocall_onethread`; the callback just adds normal Go
+   execution on top.
+2. **Stack growth during the callback.** The callback runs on `curg`'s growable
+   stack. If it grows/moves, `asmcgocall` already handles it — it saves *depth
+   from `stack.hi`*, not an absolute SP, specifically "in case the stack is
+   copied during a callback."
+3. **Accounting / nesting.** `incgo` toggles false→true around the callback;
+   `ncgo` stays incremented (a C frame is still below). `Go→C→Go→C→…` nests
+   correctly, bounded only by the 1 MiB g0 stack for the C levels.
+4. **`lockOSThread` is unnecessary** — its only job is to stop `exitsyscall`
+   from migrating `curg` to another M. There is no other M.
+
+### 14.6 The one genuinely hard part: panics through C (NOT yet supported)
+
+If a Go callback panics and is not recovered *inside the callback*, the panic
+must unwind back out through the C frames. Standard Go handles this via the
+deferred `unwindm` (`cgocall.go`), which on the panic path does `ncgo--`,
+`incgo=false`, and `unlockOSThread`. Since the onethread path does not call
+`lockOSThread` and does not use `entersyscall`, an onethread-aware `unwindm`
+(correct `ncgo`/`incgo` accounting, skip the `unlockOSThread`) is required
+before panic-across-C can be enabled. v1 is therefore scoped to **callbacks
+that return normally or recover within the callback**. That is the only part
+with real complexity, and it is the same hairy area in upstream Go.
+
+Two smaller caveats: `SetCgoTraceback`/`cgoCtxt` works (it is in
+`cgocallbackg1`), but anything that relied on the goroutine being in `_Gsyscall`
+during the C call (some tracebacks, CPU-profile SIGPROF unwinding) will not see
+that state — already moot since onethread disables CPU profiling.
+
+### 14.7 No compiler / cmd/cgo changes needed
+
+The generated wrappers already route C→Go through
+`crosscall2 → _cgo_callback → runtime.cgocallback → cgocallbackg`. Enabling the
+runtime path means **`#cgo nocallback` becomes optional rather than mandatory**
+— the earlier recommendation (§2.10/§4.9) to annotate cgo calls with
+`nocallback` no longer applies for the same-thread case. The `gp.nocgocallback`
+guard stays so a function explicitly marked `nocallback` still fails if it calls
+back (here as a fatal `throw`, since panic-through-C is not yet supported).
+
+### 14.8 Verification performed
+
+All built with `CGO_ENABLED=1 go build -onethread` using the
+`go1.26.4-pont-onethread` toolchain on linux/amd64:
+
+- **Normal-return callback:** `Go → C → goAdd → C` repeated 3× with a heap
+  allocation inside the callback. Result correct; `GOMAXPROCS==1`, `NumCPU==1`;
+  exit 0.
+- **Stack growth + nesting:** callback recurses ~2000 Go frames (forcing
+  goroutine stack growth/copy) and re-enters C which calls back again
+  (`Go→C→Go→C→Go`). Result correct; exit 0.
+- **GC inside the callback:** callback allocates 1000 buffers then calls
+  `runtime.GC()` twice while C frames sit on g0 below. Result correct; exit 0.
+- **No regression:** the same programs built without `-onethread` behave
+  identically (and report the host CPU count).
+- **Foreign-thread callback still fails:** a C-created `pthread` calling an
+  exported Go function does not run the callback. It currently fails ungracefully
+  (SIGSEGV from `throw`-ing in `needm` on a thread with no `m`) rather than
+  printing a clean diagnostic. That rough edge is pre-existing and orthogonal to
+  this change — a foreign thread hits `needm` in asm before ever reaching
+  `cgocallbackg`. Producing a clean message there is future work.
+
+### 14.9 Follow-ups
+
+- Add an onethread-aware `unwindm` and enable panic-propagation through C
+  (§14.6).
+- Wire `misc/cgo/test` callback tests (`TestCallback`, `TestCallbackGC`,
+  `TestCallbackStack`, and the `TestCallbackPanic*` group once §14.6 lands) to
+  run under `GOEXPERIMENT=onethread`, plus a `runtime` test asserting
+  `MCount()==1` across a callback and a negative test for the foreign-thread
+  case.
+- Give the foreign-thread / raw-C-thread callback a clean fatal diagnostic
+  instead of a crash.
