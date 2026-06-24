@@ -11,3 +11,5 @@ package runtime
 // lock_wasip1.go). Provide a stub so proc.go's shared idle path compiles.
 
 func onethreadHasNoteWaiters() bool { return false }
+
+func onethreadReadyNotes() {}

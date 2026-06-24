@@ -232,13 +232,13 @@ func sigdisable(sig uint32) {
 	t := &sigtable[sig]
 	if t.flags&_SigNotify != 0 {
 		if goexperiment.Onethread {
-			// There is only one OS thread; block the signal on it directly
-			// instead of signaling a dedicated signal thread.
-			if blockableSig(sig) {
-				var set sigset
-				sigaddset(&set, int(sig))
-				sigprocmask(_SIG_BLOCK, &set, nil)
-			}
+			// There is no dedicated signal thread to update. Crucially, do NOT
+			// block the signal on the sole thread: a blocked signal would just
+			// become pending — neither delivered to the Go handler nor taking
+			// its default action — so a delivery racing with Stop would be
+			// lost (see os/signal TestAtomicStop). The signal stays unblocked;
+			// the setsig restore below reverts its disposition so a later
+			// delivery takes the default action once Go stops handling it.
 		} else {
 			ensureSigM()
 			disableSigChan <- sig
@@ -685,6 +685,13 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		if !delayedSignal && validSIGPROF(mp, c) {
 			sigprof(c.sigpc(), c.sigsp(), c.siglr(), gp, mp)
 		}
+		return
+	}
+
+	if onethreadWatchdogOn && sig == _SIGALRM {
+		// GODEBUG=onethreadwatchdog stall detector. Crashes (does not return)
+		// if the sole thread has been stuck in a syscall/cgo call too long.
+		onethreadWatchdogTick(gp)
 		return
 	}
 

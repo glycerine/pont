@@ -3314,6 +3314,33 @@ The sole thread is therefore never blocked in `waitid`; other goroutines (e.g.
 the waiter wakes. Requires a pidfd-capable kernel (Linux ≥ 5.4); on older
 kernels the non-pidfd `pidWait` path still blocks (rare, documented).
 
+**Darwin (kqueue NOTE_EXIT).** Darwin has no pidfd, and its `blockUntilWaitable`
+is a no-op, so the blocking point is the `Wait4(…, 0, …)` in the shared
+`pidWait`. Under `-onethread`, `pidWait` calls `onethreadWaitPidReady(pid)`
+(`src/os/exec_unix.go`) before that reap. The Darwin implementation
+(`src/os/onethread_wait_darwin.go`) is the kqueue analogue of the pidfd path:
+
+- create a private kqueue and register the child with
+  `EVFILT_PROC`/`NOTE_EXIT`;
+- wrap that kqueue fd in a `poll.FD` and `RawRead` it — a kqueue descriptor is
+  itself readable when it has a pending event (the standard "nested kqueue"
+  embedding), so the runtime poller wakes us when the child exits; the probe
+  is a non-blocking `Kevent` drain;
+- then the shared `Wait4` reaps immediately.
+
+It is **fail-safe**: any setup error (kqueue create, registration — including
+the already-exited `ESRCH` case — or the poller refusing the kqueue fd) returns
+nil so `pidWait` falls back to the blocking `Wait4`, i.e. no worse than before.
+Non-Darwin platforms get a no-op `onethreadWaitPidReady`
+(`src/os/onethread_wait_other.go`); Linux uses the pidfd path above.
+
+Verification: compiles for darwin/amd64 (onethread and normal) and the
+linux/other stub path; **runtime-unverified** — no Darwin host was available, so
+this needs a check on macOS. (Note: darwin/**arm64** `-onethread` does not build
+at all yet due to a *pre-existing* bug in the onethread 1 MiB-stack assembly,
+`asm_arm64.s:114` loads a large constant address straight into `RSP`; unrelated
+to this work.)
+
 ### 15.4 Cooperative `notetsleepg` and signal delivery
 
 Files: `src/runtime/note_onethread.go` (new), `note_onethread_stub.go` (new, for
@@ -3393,12 +3420,20 @@ or are unpollable; they are bounded or rare in practice:
 - **Blocking cgo calls** (e.g. the cgo DNS resolver's `getaddrinfo`): by design
   cgo blocks the whole runtime until C returns (plan §4.9). The pure-Go
   resolver is poller-backed and unaffected.
-- **Darwin/non-Linux process wait:** the pidfd path is Linux-only; other
-  platforms still use a blocking `wait4`/`waitid`. Linux is the primary target.
+- **Non-Linux/Darwin process wait:** Linux uses pidfd and Darwin uses kqueue
+  NOTE_EXIT (§15.3); other Unixes still use a blocking `wait4`/`waitid`. They are
+  not onethread targets.
+
+For diagnosing the truly inherent ones (regular-file I/O, `flock`, blocking
+cgo), see the opt-in watchdog in §15.10, which converts a silent stall into a
+fatal error.
 
 ### 15.7 Files changed
 
 - `src/os/pidfd_linux.go` — poller-backed `pidfdWait` (`onethreadWaitPidfd`).
+- `src/os/onethread_wait_darwin.go` (new) — Darwin kqueue NOTE_EXIT process wait.
+- `src/os/onethread_wait_other.go` (new) — no-op `onethreadWaitPidReady` stub.
+- `src/os/exec_unix.go` — `pidWait` calls `onethreadWaitPidReady` under onethread.
 - `src/runtime/note_onethread.go` (new) — cooperative note registry, scan,
   `notetsleepg_onethread`.
 - `src/runtime/note_onethread_stub.go` (new) — `onethreadHasNoteWaiters` stub
@@ -3406,10 +3441,14 @@ or are unpollable; they are bounded or rare in practice:
 - `src/runtime/lock_futex.go`, `lock_sema.go` — `notetsleepg` onethread branch,
   `onethreadNoteWoken`, `beforeIdle` scan (`//go:yeswritebarrierrec`).
 - `src/runtime/proc.go` — idle netpoll condition (`onethreadHasNoteWaiters`),
-  `LockOSThread`/`dolockOSThread` relaxation.
+  `LockOSThread`/`dolockOSThread` relaxation, `onethreadArmWatchdog` call.
 - `src/runtime/signal_unix.go` — direct signal-mask handling in
-  `sigenable`/`sigdisable`.
+  `sigenable`/`sigdisable`; SIGALRM watchdog hook in `sighandler`.
 - `src/runtime/netpoll_epoll.go` — return on `EINTR` for untimed waits.
+- `src/runtime/runtime1.go` — `onethreadwatchdog` GODEBUG var.
+- `src/runtime/onethread_watchdog.go` (new) — watchdog state + stall detection.
+- `src/runtime/onethread_watchdog_timer.go` (new) + `..._timer_stub.go` (new) —
+  arm/disarm the ITIMER_REAL/SIGALRM watchdog (and non-target stub).
 - `src/runtime/coro_test.go` — skip OS-thread-lock-mismatch assertions.
 
 ### 15.8 Verification
@@ -3429,11 +3468,54 @@ All `go build -onethread`, Linux/amd64, `go1.26.4-pont-onethread`:
 - **No regression:** `go build std` and the touched `runtime` tests
   (`TestLockOSThread|TestSignal|TestCoro`) pass in normal (non-onethread) mode;
   all changes are guarded by the `goexperiment.Onethread` compile-time constant.
-- Runtime compiles for onethread-linux, normal-linux, darwin/arm64, js/wasm,
-  and wasip1.
+- Runtime compiles for onethread-linux, normal-linux, darwin/amd64, js/wasm,
+  and wasip1. (darwin/arm64 onethread has a pre-existing unrelated asm bug; see
+  §15.3.)
 
 ### 15.9 Follow-ups
 
-- Poller-backed process wait for Darwin (kqueue `EVFILT_PROC`/`NOTE_EXIT`).
-- Optional: a `GODEBUG` to make the inherent blocking paths (regular-file I/O on
-  slow filesystems, `flock`) fail loudly instead of stalling, for diagnosis.
+- Runtime-verify the Darwin kqueue process wait (§15.3) on a macOS host, and fix
+  the pre-existing darwin/arm64 onethread 1 MiB-stack assembly so it builds.
+
+### 15.10 GODEBUG watchdog for stalled syscalls
+
+`GODEBUG=onethreadwatchdog=N` (N milliseconds, default 0 = off) turns the
+inherent blocking paths of §15.6 from a silent freeze into a fatal, diagnosable
+crash. It is opt-in and only does anything under `-onethread`.
+
+Mechanism (`src/runtime/onethread_watchdog*.go`, hook in `sighandler`):
+
+- `onethreadArmWatchdog` (called from `runtime.main` after signals and GODEBUG
+  are set up) installs a Go SIGALRM handler and arms a repeating
+  `setitimer(ITIMER_REAL)` at the N-ms interval. It mirrors how SIGPROF is set
+  up for profiling. It is a no-op unless the GODEBUG is positive.
+- On each SIGALRM, `onethreadWatchdogTick` inspects the interrupted goroutine.
+  If it is blocked in a syscall (`_Gsyscall`) or a cgo call (`m.incgo`) and the
+  operation's identity is unchanged from the previous tick — `m.syscalltick`
+  for syscalls, `m.ncgocall` for cgo, both of which change on every new
+  syscall/cgo call — then the same operation has held the sole thread for a full
+  interval and nothing else can run, so it `throw`s with a clear message. The
+  full goroutine dump shows where the thread is stuck.
+
+Because Go installs handlers with `SA_RESTART`, an interruptible blocking
+syscall auto-restarts after the watchdog's SIGALRM without re-running
+`entersyscall`, so `syscalltick` stays stable across ticks and the stall is
+caught. A tight loop of *quick* syscalls bumps `syscalltick` every call and is
+correctly ignored, as are legitimate idle waits (the thread is then in netpoll,
+not a syscall/cgo). The effective threshold is roughly N–2N ms (two ticks).
+SIGALRM is commandeered while the watchdog is on; acceptable for a diagnostic
+(Go's timers do not use SIGALRM).
+
+Verification (Linux/amd64):
+
+- A goroutine doing a blocking `read` on a writerless pipe (freezing the sole
+  thread) crashes with `fatal error: onethread: sole OS thread stalled in a
+  blocking syscall (GODEBUG=onethreadwatchdog)` after ~2 ticks; the dump shows
+  the stuck `read`.
+- A C function that blocks forever crashes with the `blocking cgo call` variant;
+  the dump shows `cgocall_onethread`.
+- No false positives: a 1.5 s `time.Sleep`, a 2,000,000-iteration quick-syscall
+  loop, and goroutine+timer/channel waits all complete cleanly under
+  `onethreadwatchdog=200`.
+- With the GODEBUG unset the stall test simply hangs (unchanged behavior),
+  confirming the feature is fully opt-in; `go build std` is unaffected.

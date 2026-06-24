@@ -79,6 +79,15 @@ func onethreadRemoveNoteWaiter(gp *g) {
 	}
 }
 
+// onethreadReadyNotes readies any woken note waiters. It is called from the top
+// of findRunnable on every scheduling decision (see proc.go). Write barriers
+// are permitted here, as in beforeIdle: findRunnable holds its P.
+//
+//go:yeswritebarrierrec
+func onethreadReadyNotes() {
+	onethreadScanNotes()
+}
+
 // onethreadScanNotes readies every parked note waiter whose note has been
 // woken, and reports whether it readied any. It runs only on the sole thread.
 func onethreadScanNotes() bool {

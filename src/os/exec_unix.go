@@ -8,6 +8,7 @@ package os
 
 import (
 	"errors"
+	"internal/goexperiment"
 	"syscall"
 	"time"
 )
@@ -54,6 +55,17 @@ func (p *Process) pidWait() (*ProcessState, error) {
 		// active call to the signal method to complete.
 		p.sigMu.Lock()
 		p.sigMu.Unlock()
+	}
+
+	if goexperiment.Onethread {
+		// blockUntilWaitable above is a no-op on some platforms (e.g. Darwin),
+		// so the Wait4 below would block the sole OS thread. Wait for the
+		// process to become reapable via the runtime poller first; the Wait4
+		// then returns immediately. (On platforms with no poller-backed
+		// implementation this is a no-op and Wait4 still blocks, as documented.)
+		if err := onethreadWaitPidReady(p.Pid); err != nil {
+			return nil, err
+		}
 	}
 
 	var (
