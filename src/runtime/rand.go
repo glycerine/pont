@@ -60,10 +60,12 @@ func randinit() {
 		simulationMode = true
 		maps.SetSimulationMode()
 		var n, n2 uint64
-		for _, ch := range []byte(simseed) {
+	parseSeed:
+		for i := 0; i < len(simseed); i++ {
+			ch := simseed[i]
 			switch {
 			case ch == '#' || ch == '/':
-				break // comments terminate
+				break parseSeed // comments terminate
 			case ch < '0' || ch > '9':
 				continue
 			}
@@ -72,7 +74,7 @@ func randinit() {
 			if n2 > n {
 				n = n2
 			} else {
-				break // no overflow
+				break parseSeed // no overflow
 			}
 		}
 		simulationModeSeed = n
