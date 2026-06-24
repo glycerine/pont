@@ -3374,10 +3374,32 @@ pieces ensure the idle thread wakes:
   rescan. (`onethreadAddNoteWaiter` force-initializes the poller so this path is
   available even for a program that did no I/O.)
 
+The cooperative scan runs at the **top of `findRunnable`** (every scheduling
+decision), not only in `beforeIdle`. This matters: a goroutine busy-spinning in
+`Gosched` — exactly what `os/signal`'s `signalWaitUntilIdle` (called by `Stop`)
+does — never reaches the idle path, so an idle-only scan would starve
+`signal_recv` and livelock. `beforeIdle` keeps its scan too, to ready a waiter
+woken in the small window just before the thread blocks in netpoll.
+
 Signal *masks*: `ensureSigM` maintains a dedicated thread with the wanted
 signals unblocked. With one thread there is none to maintain, so under
-`-onethread` `sigenable`/`sigdisable` (`signal_unix.go`) unblock/block the signal
-directly on the sole thread.
+`-onethread` `sigenable` (`signal_unix.go`) unblocks the signal directly on the
+sole thread. `sigdisable` must **not** block it: a blocked signal merely becomes
+pending — neither delivered to the handler nor taking its default action — so a
+delivery racing with `Stop` would be lost (this is what `os/signal`'s
+`TestAtomicStop` exercises). The signal stays unblocked and the existing
+`setsig`-restore reverts its disposition.
+
+**Darwin signals.** Darwin's `signal_recv`/`sigsend`/`signal_enable`
+(`sigqueue.go`) normally use a self-pipe (`sigNoteSleep`/`sigNoteWakeup`), whose
+`sigNoteSleep` is a blocking pipe `read` via `entersyscallblock` — fatal under
+`-onethread`. Under `-onethread` those three sites instead take the cooperative
+`notetsleepg`/`notewakeup`/`noteclear` path used elsewhere. That is
+async-signal-safe here even though the sema `notewakeup` normally calls the
+unsafe `semawakeup`: the cooperative waiter never registers its M in the note,
+so `notewakeup` hits the "nothing waiting" case and skips `semawakeup`. The
+Darwin idle path also needs `netpoll` (kqueue) to return on `EINTR` for untimed
+waits, mirroring the epoll change (`netpoll_kqueue.go`).
 
 ### 15.5 OS-thread locking relaxation
 
@@ -3435,16 +3457,20 @@ fatal error.
 - `src/os/onethread_wait_other.go` (new) — no-op `onethreadWaitPidReady` stub.
 - `src/os/exec_unix.go` — `pidWait` calls `onethreadWaitPidReady` under onethread.
 - `src/runtime/note_onethread.go` (new) — cooperative note registry, scan,
-  `notetsleepg_onethread`.
-- `src/runtime/note_onethread_stub.go` (new) — `onethreadHasNoteWaiters` stub
-  for js/wasip1.
+  `notetsleepg_onethread`, `onethreadReadyNotes` (`//go:yeswritebarrierrec`).
+- `src/runtime/note_onethread_stub.go` (new) — `onethreadHasNoteWaiters` /
+  `onethreadReadyNotes` stubs for js/wasip1.
 - `src/runtime/lock_futex.go`, `lock_sema.go` — `notetsleepg` onethread branch,
   `onethreadNoteWoken`, `beforeIdle` scan (`//go:yeswritebarrierrec`).
-- `src/runtime/proc.go` — idle netpoll condition (`onethreadHasNoteWaiters`),
+- `src/runtime/proc.go` — `findRunnable`-top note scan (`onethreadReadyNotes`),
+  idle netpoll condition (`onethreadHasNoteWaiters`),
   `LockOSThread`/`dolockOSThread` relaxation, `onethreadArmWatchdog` call.
-- `src/runtime/signal_unix.go` — direct signal-mask handling in
-  `sigenable`/`sigdisable`; SIGALRM watchdog hook in `sighandler`.
-- `src/runtime/netpoll_epoll.go` — return on `EINTR` for untimed waits.
+- `src/runtime/sigqueue.go` — route Darwin `signal_recv`/`sigsend`/
+  `signal_enable` to the cooperative note path under onethread.
+- `src/runtime/signal_unix.go` — `sigenable` unblocks on the sole thread,
+  `sigdisable` no longer blocks; SIGALRM watchdog hook in `sighandler`.
+- `src/runtime/netpoll_epoll.go`, `netpoll_kqueue.go` — return on `EINTR` for
+  untimed waits.
 - `src/runtime/runtime1.go` — `onethreadwatchdog` GODEBUG var.
 - `src/runtime/onethread_watchdog.go` (new) — watchdog state + stall detection.
 - `src/runtime/onethread_watchdog_timer.go` (new) + `..._timer_stub.go` (new) —
@@ -3461,7 +3487,10 @@ All `go build -onethread`, Linux/amd64, `go1.26.4-pont-onethread`:
   deadlocked. `go test os/exec` passes.
 - **Signals:** `signal.Notify` + self-`SIGUSR1` delivered both while other
   goroutines are cooperatively active and in the daemon-style "block only on the
-  signal" case (exercising the netpoll/EINTR path). `go test os/signal` passes.
+  signal" case (exercising the netpoll/EINTR path). The **full `go test
+  os/signal` suite passes** (73 s), including `TestAtomicStop`, which originally
+  livelocked (the `findRunnable`-top scan fix) and earlier lost signals (the
+  `sigdisable` no-block fix).
 - **OS-thread locking / cgo coroutines:** `go test runtime -run
   'TestCoroLockOSThread|TestCoroCgoCallback'` passes (inapplicable
   lock-mismatch cases skipped; cgo-callback-in-coroutine cases run).
@@ -3471,6 +3500,11 @@ All `go build -onethread`, Linux/amd64, `go1.26.4-pont-onethread`:
 - Runtime compiles for onethread-linux, normal-linux, darwin/amd64, js/wasm,
   and wasip1. (darwin/arm64 onethread has a pre-existing unrelated asm bug; see
   §15.3.)
+- **Darwin signals + process wait are compile-verified only** (darwin/amd64,
+  onethread and normal); they need a runtime check on a macOS host. The Darwin
+  signal fix removes the `entersyscallblock` "blocking syscall in onethread
+  mode" panic from `sigNoteSleep` by routing `signal_recv` through the
+  cooperative note path.
 
 ### 15.9 Follow-ups
 

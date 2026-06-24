@@ -10,6 +10,7 @@ package runtime
 
 import (
 	"internal/goarch"
+	"internal/goexperiment"
 	"internal/runtime/atomic"
 	"unsafe"
 )
@@ -118,7 +119,12 @@ retry:
 		}
 		// If a timed sleep was interrupted, just return to
 		// recalculate how long we should sleep now.
-		if delay > 0 {
+		//
+		// Under -onethread, also return on EINTR from an untimed (delay < 0)
+		// wait so the sole-thread scheduler can rescan note waiters: a signal
+		// (e.g. for signal_recv) interrupts this kevent, and the scheduler's
+		// findRunnable/beforeIdle scan must run to ready the waiter.
+		if delay > 0 || (goexperiment.Onethread && delay < 0) {
 			return gList{}, 0
 		}
 		goto retry

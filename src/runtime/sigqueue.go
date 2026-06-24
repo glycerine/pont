@@ -33,6 +33,7 @@
 package runtime
 
 import (
+	"internal/goexperiment"
 	"internal/runtime/atomic"
 	_ "unsafe" // for go:linkname
 )
@@ -109,7 +110,12 @@ Send:
 			break Send
 		case sigReceiving:
 			if sig.state.CompareAndSwap(sigReceiving, sigIdle) {
-				if GOOS == "darwin" || GOOS == "ios" {
+				// Under -onethread, Darwin uses the cooperative note path
+				// (notewakeup/notetsleepg) like other platforms instead of the
+				// blocking sigNote pipe. notewakeup here is async-signal-safe
+				// because the cooperative waiter registers no M, so it never
+				// reaches the unsafe semawakeup. See note_onethread.go.
+				if (GOOS == "darwin" || GOOS == "ios") && !goexperiment.Onethread {
 					sigNoteWakeup(&sig.note)
 					break Send
 				}
@@ -145,7 +151,11 @@ func signal_recv() uint32 {
 				throw("signal_recv: inconsistent state")
 			case sigIdle:
 				if sig.state.CompareAndSwap(sigIdle, sigReceiving) {
-					if GOOS == "darwin" || GOOS == "ios" {
+					// Under -onethread, Darwin uses the cooperative
+					// notetsleepg path (see note_onethread.go) instead of
+					// sigNoteSleep, whose blocking pipe read would freeze the
+					// sole thread.
+					if (GOOS == "darwin" || GOOS == "ios") && !goexperiment.Onethread {
 						sigNoteSleep(&sig.note)
 						break Receive
 					}
@@ -201,7 +211,9 @@ func signal_enable(s uint32) {
 	if !sig.inuse {
 		// This is the first call to signal_enable. Initialize.
 		sig.inuse = true // enable reception of signals; cannot disable
-		if GOOS == "darwin" || GOOS == "ios" {
+		// Under -onethread, Darwin uses the cooperative note path, so it does
+		// not set up the sigNote pipe.
+		if (GOOS == "darwin" || GOOS == "ios") && !goexperiment.Onethread {
 			sigNoteSetup(&sig.note)
 		} else {
 			noteclear(&sig.note)
