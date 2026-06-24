@@ -220,12 +220,11 @@ debugging (of classically hard to reproduce distributed
 systems bugs) by starting again with the same seed that 
 was found to elicit a bug.
 
-To allow DST in Pont, we set these env var:
+To allow DST in Pont, we use the flag: `-onethread` and set these env var:
 
 ~~~
 GODEBUG=asyncpreemptoff=1
 GOMAXPROCS=1 
-GOEXPERIMENT=synctest
 GO_DSIM_SEED=1 
 ~~~
 
@@ -262,7 +261,8 @@ that were needed.](https://www.polarsignals.com/blog/posts/2024/05/28/mostly-dst
 
 Pont, however, is not limited to WASM. Pont
 works on any architecture/OS that the standard Go
-gc compiler supports.
+gc compiler supports. The -onethread flag is
+currently only supported on Linux.
 
 The GODEBUG=asyncpreemptoff=1 turns off goroutine pre-emption
 for more deterministic execution.
@@ -275,13 +275,11 @@ background thread pool, but our aim (hope) is that they
 will not be used during DST that makes no system
 calls for network or file IO.
 
-While GOEXPERIMENT=synctest should not be needed to
-use the testing/synctest fake clock in Go 1.26.4 
-we find it convenient when writing tests that 
-can be run either under synctest with
-[gosimnet](https://github.com/glycerine/gosimnet),
-or using real network calls.
-
+The -onethread flag to Go causes the entire Go runtime
+to run on only a single thread. This eliminates a
+major source of non-determinism: the OS thread switching
+schedule. Combined with testing/synctest and the
+above env var settings, DST becomes viable.
 
 # Pont: the new rules for channels
 
