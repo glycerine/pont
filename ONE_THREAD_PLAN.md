@@ -3314,32 +3314,43 @@ The sole thread is therefore never blocked in `waitid`; other goroutines (e.g.
 the waiter wakes. Requires a pidfd-capable kernel (Linux ≥ 5.4); on older
 kernels the non-pidfd `pidWait` path still blocks (rare, documented).
 
-**Darwin (kqueue NOTE_EXIT).** Darwin has no pidfd, and its `blockUntilWaitable`
-is a no-op, so the blocking point is the `Wait4(…, 0, …)` in the shared
-`pidWait`. Under `-onethread`, `pidWait` calls `onethreadWaitPidReady(pid)`
-(`src/os/exec_unix.go`) before that reap. The Darwin implementation
-(`src/os/onethread_wait_darwin.go`) is the kqueue analogue of the pidfd path:
+**Darwin / non-pidfd (cooperative WNOHANG poll).** Darwin has no pidfd, and its
+`blockUntilWaitable` is a no-op, so the blocking point is the `Wait4(…, 0, …)` in
+the shared `pidWait`. Under `-onethread`, `pidWait` instead returns
+`p.onethreadPidWait()` (`src/os/onethread_wait_unix.go`, `//go:build unix`),
+which reaps cooperatively: a non-blocking `Wait4(…, WNOHANG, …)` in a loop, with
+a short capped timer backoff (`time.Sleep`, which is cooperative under
+`-onethread` — it parks on a runtime timer) between attempts, so other
+goroutines and the netpoller keep running while the child is alive. The reap is
+done by the loop itself (no separate blocking `Wait4`).
 
-- create a private kqueue and register the child with
-  `EVFILT_PROC`/`NOTE_EXIT`;
-- wrap that kqueue fd in a `poll.FD` and `RawRead` it — a kqueue descriptor is
-  itself readable when it has a pending event (the standard "nested kqueue"
-  embedding), so the runtime poller wakes us when the child exits; the probe
-  is a non-blocking `Kevent` drain;
-- then the shared `Wait4` reaps immediately.
+An earlier attempt used a nested kqueue (`EVFILT_PROC`/`NOTE_EXIT`) polled
+through the runtime poller, but the runtime registers fds with both
+`EVFILT_READ` and `EVFILT_WRITE`, which the poller would not accept for a kqueue
+fd on macOS, so it fell back to the blocking `Wait4` and hung. The WNOHANG poll
+avoids that fragility entirely. (It does mean process-wait latency is bounded by
+the backoff, not event-driven; an event-driven kqueue path with native runtime
+`EVFILT_PROC` support is possible future work.)
 
-It is **fail-safe**: any setup error (kqueue create, registration — including
-the already-exited `ESRCH` case — or the poller refusing the kqueue fd) returns
-nil so `pidWait` falls back to the blocking `Wait4`, i.e. no worse than before.
-Non-Darwin platforms get a no-op `onethreadWaitPidReady`
-(`src/os/onethread_wait_other.go`); Linux uses the pidfd path above.
+`onethreadPidWait` lives in a `//go:build unix` file because `syscall.Wait4` /
+`syscall.WNOHANG` do not exist on js/wasm or wasip1; a stub
+(`onethread_wait_wasm.go`) keeps `exec_unix.go` compiling there (where
+`-onethread` is unsupported and the call is dead).
 
-Verification: compiles for darwin/amd64 (onethread and normal) and the
-linux/other stub path; **runtime-unverified** — no Darwin host was available, so
-this needs a check on macOS. (Note: darwin/**arm64** `-onethread` does not build
-at all yet due to a *pre-existing* bug in the onethread 1 MiB-stack assembly,
-`asm_arm64.s:114` loads a large constant address straight into `RSP`; unrelated
-to this work.)
+Verification: compiles for darwin/amd64, linux, freebsd, js/wasm, wasip1 (normal
+and, where applicable, onethread); `go test os/exec` passes normal and onethread
+on linux. The Darwin path is **runtime-unverified** (no macOS host). (Note:
+darwin/**arm64** `-onethread` does not build at all yet due to a *pre-existing*
+bug in the onethread 1 MiB-stack assembly, `asm_arm64.s:114` loads a large
+constant address straight into `RSP`; unrelated to this work.)
+
+**Test gating.** `runtime/onethread_test.go` (`TestOnethreadSmoke`,
+`TestOnethreadCgoMalloc`) spawns real `go run -onethread` subprocesses. It had no
+guard, so a normal `go test runtime` — and therefore `all.bash` — ran
+`-onethread` programs even when the caller never asked for onethread; on Darwin
+those subprocesses hang, hanging the whole suite. These tests now require
+explicit opt-in via `GO_TEST_ONETHREAD=1` (`mustSupportOnethread` skips
+otherwise), so a normal build/test never exercises onethread.
 
 ### 15.4 Cooperative `notetsleepg` and signal delivery
 
@@ -3453,9 +3464,12 @@ fatal error.
 ### 15.7 Files changed
 
 - `src/os/pidfd_linux.go` — poller-backed `pidfdWait` (`onethreadWaitPidfd`).
-- `src/os/onethread_wait_darwin.go` (new) — Darwin kqueue NOTE_EXIT process wait.
-- `src/os/onethread_wait_other.go` (new) — no-op `onethreadWaitPidReady` stub.
-- `src/os/exec_unix.go` — `pidWait` calls `onethreadWaitPidReady` under onethread.
+- `src/os/onethread_wait_unix.go` (new) — cooperative `Wait4(WNOHANG)`+backoff
+  `onethreadPidWait` (Darwin / non-pidfd path).
+- `src/os/onethread_wait_wasm.go` (new) — `onethreadPidWait` stub for js/wasip1.
+- `src/os/exec_unix.go` — `pidWait` returns `onethreadPidWait` under onethread.
+- `src/runtime/onethread_test.go` — gate `-onethread` integration tests behind
+  `GO_TEST_ONETHREAD=1`.
 - `src/runtime/note_onethread.go` (new) — cooperative note registry, scan,
   `notetsleepg_onethread`, `onethreadReadyNotes` (`//go:yeswritebarrierrec`).
 - `src/runtime/note_onethread_stub.go` (new) — `onethreadHasNoteWaiters` /
