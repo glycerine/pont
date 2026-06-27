@@ -42,6 +42,14 @@ func (p *Process) pidWait() (*ProcessState, error) {
 		return nil, syscall.EINVAL
 	}
 
+	if goexperiment.Onethread {
+		// A blocking Wait4 would freeze the sole OS thread (blockUntilWaitable
+		// is also a blocking wait, and a no-op on Darwin). Reap cooperatively
+		// instead. Linux normally takes the pidfd path (pidfdWait); this is the
+		// fallback and the Darwin path.
+		return p.onethreadPidWait()
+	}
+
 	// If we can block until Wait4 will succeed immediately, do so.
 	ready, err := p.blockUntilWaitable()
 	if err != nil {
@@ -55,17 +63,6 @@ func (p *Process) pidWait() (*ProcessState, error) {
 		// active call to the signal method to complete.
 		p.sigMu.Lock()
 		p.sigMu.Unlock()
-	}
-
-	if goexperiment.Onethread {
-		// blockUntilWaitable above is a no-op on some platforms (e.g. Darwin),
-		// so the Wait4 below would block the sole OS thread. Wait for the
-		// process to become reapable via the runtime poller first; the Wait4
-		// then returns immediately. (On platforms with no poller-backed
-		// implementation this is a no-op and Wait4 still blocks, as documented.)
-		if err := onethreadWaitPidReady(p.Pid); err != nil {
-			return nil, err
-		}
 	}
 
 	var (
