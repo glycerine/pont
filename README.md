@@ -1,5 +1,7 @@
 # Pont: a superset of Go with friendly channels and DST
 
+* News 2026 June 27: the -onethread flag now works on darwin (MacOS), in addition to Linux.
+
 * News 2026 June 24: the -onethread flag. Running `go build -onethread` will generate a go binary that only ever uses a single thread, to reduce the non-determinism of thread scheduling. This applies even to CGO, and we still support Go -> C -> Go; although panics from the Go callback cannot be recover()-ed across the C call. Using recover(), if needed, must happen before the CGO callback to Go returns. Works on Linux, and on Linux with synctest where it is particularly useful. Darwin still in progress.
 
 * News 2026 June 21: we rebased Pont onto go1.26.4. Previously we were on top of go1.25.3.
