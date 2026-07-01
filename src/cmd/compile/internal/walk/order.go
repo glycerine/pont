@@ -1104,7 +1104,7 @@ func (o *orderState) stmt(n ir.Node) {
 					base.Fatalf("ninit on select send-sticky")
 				}
 
-				// case c <~ x
+				// case c <$ x
 				// r->left is c, r->right is x, both are always evaluated.
 				r.Chan = o.expr(r.Chan, nil)
 

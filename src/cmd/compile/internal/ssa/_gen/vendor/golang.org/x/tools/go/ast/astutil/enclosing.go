@@ -438,11 +438,11 @@ func childrenOf(n ast.Node) []ast.Node {
 
 	case *ast.SendStmtFinal:
 		children = append(children,
-			tok(n.Arrow, len("<$")))
+			tok(n.Arrow, len("<#")))
 
 	case *ast.SendStmtSticky:
 		children = append(children,
-			tok(n.Arrow, len("<~")))
+			tok(n.Arrow, len("<$")))
 
 	case *ast.SliceExpr:
 		children = append(children,

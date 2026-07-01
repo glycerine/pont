@@ -195,7 +195,7 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
 	chansend(c, elem, true, sys.GetCallerPC(), false, false)
 }
 
-// entry point for sticky send, c <~ x from compiled code.
+// entry point for sticky send, c <$ x from compiled code.
 //
 //go:nosplit
 func chansend1sticky(c *hchan, elem unsafe.Pointer) {
@@ -254,7 +254,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr, sticky,
 	}
 
 	if sticky && c.dataqsiz == 0 {
-		panic(plainError("a sticky-send (<~) on an unbuffered channel is not allowed."))
+		panic(plainError("a sticky-send on an unbuffered channel is not allowed."))
 	}
 
 	//println("chansend: sticky =", sticky, "  ; final =", final)
@@ -293,7 +293,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr, sticky,
 
 	var ok, mustBlock bool
 	if sticky {
-		// c <~ x, sticky send.
+		// c <$ x, sticky send.
 		// INVAR: we are buffered, above asserted c.dataqsiz > 0.
 
 		if c.sticky != 0 {
@@ -899,7 +899,7 @@ func chanrecv2(c *hchan, elem unsafe.Pointer) (received bool) {
 	return
 }
 
-// entry points for <~ c from compiled code.
+// entry points for <$ c from compiled code.
 //
 //go:nosplit
 func chanrecv1sticky(c *hchan, elem unsafe.Pointer) {
@@ -1088,7 +1088,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block, stickyrecv, piperecv bool) (se
 				// why it is called sticky.
 
 				if stickyrecv {
-					// A sticky receive, <~c cancels it.
+					// A sticky receive, <$c cancels it.
 					// A sticky receive pops off a sticky
 					// value at the head, cancelling any
 					// further sticky receives until
@@ -1329,7 +1329,7 @@ func recv(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int, stic
 
 				stickyp := chanbuf(c, c.sticky-1)
 
-				// How to handle sticky <~ sticky if the first sticky
+				// How to handle sticky <$ sticky if the first sticky
 				// is not yet at the head of the queue? We replace the
 				// old sticky value with the new sticky value.
 

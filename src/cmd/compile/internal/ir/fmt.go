@@ -78,15 +78,15 @@ var OpNames = []string{
 	ORANGE:            "range",
 	OREAL:             "real",
 	ORECV:             "<-",
-	ORECV_STICKY:      "<~",
+	ORECV_STICKY:      "<$",
 	ORECV_PIPE:        "<|",
 	ORECOVER:          "recover",
 	ORETURN:           "return",
 	ORSH:              ">>",
 	OSELECT:           "select",
 	OSEND:             "<-",
-	OSEND_FINAL:       "<$",
-	OSEND_STICKY:      "<~",
+	OSEND_FINAL:       "<#",
+	OSEND_STICKY:      "<$",
 	OSUB:              "-",
 	OSWITCH:           "switch",
 	OUNSAFEADD:        "unsafe.Add",
@@ -854,13 +854,13 @@ func exprFmt(n Node, s fmt.State, prec int) {
 	case OSEND_FINAL:
 		n := n.(*SendStmtFinal)
 		exprFmt(n.Chan, s, nprec)
-		fmt.Fprintf(s, " <$ ")
+		fmt.Fprintf(s, " <# ")
 		exprFmt(n.Value, s, nprec+1)
 
 	case OSEND_STICKY:
 		n := n.(*SendStmtSticky)
 		exprFmt(n.Chan, s, nprec)
-		fmt.Fprintf(s, " <~ ")
+		fmt.Fprintf(s, " <$ ")
 		exprFmt(n.Value, s, nprec+1)
 
 	case OADDSTR:

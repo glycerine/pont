@@ -467,7 +467,6 @@ bufrecv:
 		typedmemmove(c.elemtype, cas.elem, qp)
 	}
 	// implement <- receive of sticky in select
-	// implement <~ receive of sticky in select ((jea)TODO how can isStickyRecv be set? probably need another place to mark sudog receive as sticky. or mark the case (cas) as a sticky receive)
 	const isStickyRecv = false
 
 	if c.sticky == 0 || c.sticky-1 != c.recvx || isStickyRecv {
