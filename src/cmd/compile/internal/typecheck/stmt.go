@@ -487,7 +487,7 @@ func tcSelect(sel *ir.SelectStmt) {
 
 			case ir.OAS:
 				// convert x = <-c into x, _ = <-c
-				// convert x = <~c into x, _ = <~c
+				// convert x = <$c into x, _ = <$c
 				// remove implicit conversions; the eventual assignment
 				// will reintroduce them.
 				n := n.(*ir.AssignStmt)
@@ -534,7 +534,7 @@ func tcSelect(sel *ir.SelectStmt) {
 				oselrecv2(ir.BlankNode, n, false, false, false)
 
 			case ir.ORECV_STICKY:
-				// convert <~c into _, _ = <~c
+				// convert <$c into _, _ = <$c
 				n := n.(*ir.UnaryExpr)
 				oselrecv2(ir.BlankNode, n, false, true, false)
 

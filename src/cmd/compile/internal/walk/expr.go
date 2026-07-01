@@ -218,7 +218,7 @@ func walkExpr1(n ir.Node, init *ir.Nodes) ir.Node {
 		n := n.(*ir.AssignListStmt)
 		return walkAssignRecv(init, n, false, false)
 
-	// x, y = <~c
+	// x, y = <$ c
 	// order.stmt made sure x is addressable or blank.
 	case ir.OAS2RECV_STICKY:
 		n := n.(*ir.AssignListStmt)

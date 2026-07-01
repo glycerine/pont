@@ -180,7 +180,7 @@ func (e *escape) stmt(n ir.Node) {
 		n := n.(*ir.AssignListStmt)
 		e.assignList(n.Lhs, n.Rhs, "assign-pair-receive", n)
 
-	case ir.OAS2RECV_STICKY, ir.OSELRECV2_STICKY: // v, ok = <~ch
+	case ir.OAS2RECV_STICKY, ir.OSELRECV2_STICKY: // v, ok = <$ ch
 		n := n.(*ir.AssignListStmt)
 		e.assignList(n.Lhs, n.Rhs, "assign-pair-receive-sticky", n)
 

@@ -83,7 +83,7 @@ func walkAssign(init *ir.Nodes, n ir.Node) ir.Node {
 		return mkcall1(chanfn("chanrecv1", 2, r.Type()), nil, init, r, n1)
 
 	case ir.ORECV_STICKY:
-		// x = <~c; as.Left is x, as.Right.Left is c.
+		// x = <$ c; as.Left is x, as.Right.Left is c.
 		// order.stmt made sure x is addressable.
 		recv := as.Y.(*ir.UnaryExpr)
 		recv.X = walkExpr(recv.X, init)
@@ -237,7 +237,7 @@ func walkAssignRecv(init *ir.Nodes, n *ir.AssignListStmt, sticky, pipe bool) ir.
 		n1 = typecheck.NodAddr(n.Lhs[0])
 	}
 
-	//base.Warn("assign.go walkAssignRecv was called. r.Op() = '%#v'\n", r.Op()) // <~ seen. good.
+	//base.Warn("assign.go walkAssignRecv was called. r.Op() = '%#v'\n", r.Op()) // <$ seen. good.
 
 	var fn ir.Node
 	if pipe {

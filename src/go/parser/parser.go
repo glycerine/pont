@@ -1856,7 +1856,7 @@ func (p *parser) parseUnaryExpr() ast.Expr {
 		arrow := p.pos
 		p.next()
 		x := p.parseUnaryExpr()
-		// <~(expr)
+		// <$(expr)
 		return &ast.UnaryExpr{OpPos: arrow, Op: tok, X: x}
 
 	case token.PIPE_ARROW:
@@ -2017,7 +2017,7 @@ func (p *parser) parseSimpleStmt(mode int) (ast.Stmt, bool) {
 		return &ast.SendStmtSticky{Chan: x[0], Arrow: arrow, Value: y}, false
 
 	case token.FINAL_ARROW:
-		// final sticky send statement
+		// final sticky send statement, <#
 		arrow := p.pos
 		p.next()
 		y := p.parseRhs()

@@ -455,14 +455,14 @@ type SendStmt struct {
 	Value Node
 }
 
-// A SendStmtFinal is a final send statement: X <$ Y
+// A SendStmtFinal is a final send statement: X <# Y
 type SendStmtFinal struct {
 	miniStmt
 	Chan  Node
 	Value Node
 }
 
-// A SendStmtSticky is a sticky send statement: X <~ Y
+// A SendStmtSticky is a sticky send statement: X <$ Y
 type SendStmtSticky struct {
 	miniStmt
 	Chan  Node

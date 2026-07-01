@@ -305,16 +305,16 @@ const (
 	OGETG        // runtime.getg() (read g pointer)
 	OGETCALLERSP // internal/runtime/sys.GetCallerSP() (stack pointer in caller frame)
 
-	ORECV_STICKY     // <~X
+	ORECV_STICKY     // <$X
 	OSELRECV2_STICKY // sticky receive ORECV_STICKY version of OSELRECV2
-	OAS2RECV_STICKY  // Lhs = Rhs (x, ok = <~c)
+	OAS2RECV_STICKY  // Lhs = Rhs (x, ok = <$c)
 
 	ORECV_PIPE     // <| X
 	OSELRECV2_PIPE // sticky receive ORECV_PIPE version of OSELRECV2
 	OAS2RECV_PIPE  // Lhs = Rhs (x, count = <| c)
 
-	OSEND_FINAL  // Chan <$ Value
-	OSEND_STICKY // Chan <~ Value
+	OSEND_FINAL  // Chan <# Value
+	OSEND_STICKY // Chan <$ Value
 
 	OEND
 )
