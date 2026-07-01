@@ -1,5 +1,14 @@
 # Pont: a superset of Go with friendly channels and DST
 
+* If building with `src/all.bash` gives vet test failures 
+like FAIL: `TestVet/unused`, then you
+have a polluted vet cache. Assuming your pont is checked
+at /usr/local/dev-go/go, for example, clear your vet
+cache like this before doing `clean.bash` and `all.bash` again.
+~~~
+GOROOT=/usr/local/dev-go/go /usr/local/dev-go/go/bin/go clean -cache
+~~~
+
 * News 2026 June 27: the -onethread flag now works on darwin (MacOS), in addition to Linux.
 
 * News 2026 June 24: the -onethread flag. Running `go build -onethread` will generate a go binary that only ever uses a single thread, to reduce the non-determinism of thread scheduling. This applies even to CGO, and we still support Go -> C -> Go; although panics from the Go callback cannot be recover()-ed across the C call. Using recover(), if needed, must happen before the CGO callback to Go returns. Works on Linux, and on Linux with synctest where it is particularly useful. Darwin still in progress.
