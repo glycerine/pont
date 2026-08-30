@@ -3567,3 +3567,310 @@ Verification (Linux/amd64):
   `onethreadwatchdog=200`.
 - With the GODEBUG unset the stall test simply hangs (unchanged behavior),
   confirming the feature is fully opt-in; `go build std` is unaffected.
+
+
+2026 Aug 30: extend -onethread to riscv64 on linux
+==================================================
+
+# Pont `-onethread` RISC-V 64 Linux Extension Plan
+
+This document plans the work needed to extend Pont's native
+single-OS-thread runtime mode from linux/amd64 and linux/arm64 to
+linux/riscv64. No other riscv64 operating system is in scope.
+
+The existing shared `-onethread` runtime machinery should remain the source of
+truth. The riscv64 work is primarily about admitting the platform and teaching
+the riscv64 process-entry assembly to construct the same large, Pont-owned
+initial `g0` stack that amd64 and arm64 already construct.
+
+## 1. Target Invariant
+
+For `GOOS=linux GOARCH=riscv64 go build -onethread`, the resulting process
+must have the same invariant as existing supported Pont targets:
+
+```text
+one process, exactly one OS thread total, one runtime M, one P
+```
+
+The one OS thread is the initial thread that entered the process. Pont must not
+create a second OS thread for sysmon, the template thread, cgo callbacks,
+syscall handoff, or profiling. Outbound cgo calls may run on the sole thread
+and block the whole runtime until C returns.
+
+## 2. Current State
+
+The shared runtime side is already mostly architecture-independent:
+
+- `src/runtime/proc.go` skips sysmon, template-thread startup, extra-M
+  machinery, and thread-start paths under `goexperiment.Onethread`.
+- `src/runtime/os_linux.go` throws from `newosproc` and exits from
+  `newosproc0` if `goexperiment.Onethread` is active.
+- `src/runtime/cgocall.go` routes outbound cgo calls through
+  `cgocall_onethread`, which keeps the sole P attached and runs C on `m.g0`.
+- `src/runtime/onethread.go` verifies that startup is on `m0/g0` and that the
+  constructed C/g0 stack has at least 1 MiB of usable space.
+- `src/runtime/note_onethread.go`, `src/runtime/lock_futex.go`, and scheduler
+  hooks in `proc.go` provide the cooperative note-wait path needed by signal
+  waiters in a single-thread runtime.
+- `src/runtime/netpoll_epoll.go` already has the linux epoll adjustment needed
+  to return from untimed waits when interrupted.
+
+The missing riscv64-specific pieces are:
+
+- `src/runtime/asm_riscv64.s` still initializes `g0` from the ordinary entry
+  stack with a 64 KiB stack bound.
+- `src/cmd/go/internal/work/init.go` allows `-onethread` only on
+  `amd64` and `arm64`.
+- `src/runtime/onethread_test.go` skips riscv64.
+- `src/runtime/onethread_watchdog_timer.go` and its stub are build-tagged only
+  for `(linux || darwin) && (amd64 || arm64)`.
+
+## 3. Platform Gating
+
+Update `src/cmd/go/internal/work/init.go` so `-onethread` is accepted only for
+these exact platform pairs:
+
+```text
+linux/amd64
+linux/arm64
+linux/riscv64
+darwin/amd64
+darwin/arm64
+```
+
+Do not simply add `riscv64` to the existing architecture switch. The current
+code has independent OS and architecture switches, and that shape would
+accidentally accept `darwin/riscv64` after adding the new arch. Replace the
+split validation with an explicit helper or pair-wise switch such as:
+
+```go
+switch cfg.Goos + "/" + cfg.Goarch {
+case "linux/amd64", "linux/arm64", "linux/riscv64",
+	"darwin/amd64", "darwin/arm64":
+	// supported
+default:
+	base.Fatalf("go: -onethread is not supported on %s/%s", cfg.Goos, cfg.Goarch)
+}
+```
+
+Keep the existing incompatibility checks for race, MSan, ASan, linkshared, and
+unsupported build modes unchanged.
+
+Mirror the same exact supported-pair logic in
+`src/runtime/onethread_test.go` so the opt-in integration tests run on
+linux/riscv64 but still skip other riscv64 operating systems.
+
+## 4. RISC-V Startup Assembly
+
+Modify `src/runtime/asm_riscv64.s` to match the amd64 and arm64 onethread
+startup model.
+
+Add the onethread stack constants near the includes:
+
+```asm
+#ifdef GOEXPERIMENT_onethread
+#define ONETHREAD_STACK_SIZE 1114112
+#define ONETHREAD_USABLE_STACK 1048576
+#endif
+```
+
+At the start of `runtime·rt0_go`, before the local frame is opened, switch the
+initial thread onto the Pont-owned stack:
+
+```asm
+TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
+	// X2 = stack; A0 = argc; A1 = argv
+#ifdef GOEXPERIMENT_onethread
+	MOV	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), X2
+#endif
+	SUB	$24, X2
+	MOV	A0, 8(X2)
+	MOV	A1, 16(X2)
+```
+
+Use the onethread usable-stack size when first seeding `runtime·g0`:
+
+```asm
+	MOV	$runtime·g0(SB), g
+#ifdef GOEXPERIMENT_onethread
+	MOV	$(-ONETHREAD_USABLE_STACK), T0
+#else
+	MOV	$(-64*1024), T0
+#endif
+	ADD	T0, X2, T1
+	MOV	T1, g_stackguard0(g)
+	MOV	T1, g_stackguard1(g)
+	MOV	T1, (g_stack+stack_lo)(g)
+	MOV	X2, (g_stack+stack_hi)(g)
+```
+
+After `_cgo_init` returns, restore the authoritative Pont-owned bounds before
+the normal stackguard update. This mirrors amd64/arm64, because `_cgo_init` may
+rewrite `g0.stack` from pthread stack information:
+
+```asm
+#ifdef GOEXPERIMENT_onethread
+	MOV	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), T1
+	MOV	T1, (g_stack+stack_hi)(g)
+	MOV	$(-ONETHREAD_USABLE_STACK), T0
+	ADD	T0, T1, T1
+	MOV	T1, (g_stack+stack_lo)(g)
+#endif
+
+nocgo:
+	// update stackguard after _cgo_init
+	MOV	(g_stack+stack_lo)(g), T0
+	ADD	$const_stackGuard, T0
+```
+
+Keep the exact label placement consistent with the final control flow. If the
+reset block is placed before `nocgo:`, it must run only on the cgo path. If it
+is placed after `nocgo:`, it must be safe for both cgo and non-cgo paths. The
+amd64 and arm64 shape is cgo-path-only reset followed by the common stackguard
+update.
+
+Declare the backing stack near the existing `runtime·mainPC` data:
+
+```asm
+#ifdef GOEXPERIMENT_onethread
+GLOBL	onethreadStack<>(SB),NOPTR,$ONETHREAD_STACK_SIZE
+#endif
+```
+
+No change should be needed in `src/runtime/rt0_linux_riscv64.s`: it already
+loads `argc` and `argv`, then jumps through `main` into `runtime·rt0_go`.
+Switching `X2` in `runtime·rt0_go` is enough because `argc` and `argv` are held
+in `A0` and `A1`.
+
+No change should be needed in `src/runtime/tls_riscv64.s`: riscv64 keeps `g` in
+the dedicated Go register and only saves it to TLS for cgo. The existing
+`setg_gcc`, `save_g`, `load_g`, `asmcgocall`, and `cgocallback` paths should be
+validated by tests rather than redesigned.
+
+## 5. Watchdog Build Tags
+
+`src/runtime/onethread_watchdog_timer.go` currently has:
+
+```go
+//go:build (linux || darwin) && (amd64 || arm64)
+```
+
+Change it to include linux/riscv64 without implying darwin/riscv64:
+
+```go
+//go:build (linux && (amd64 || arm64 || riscv64)) || (darwin && (amd64 || arm64))
+```
+
+Change `src/runtime/onethread_watchdog_timer_stub.go` to the exact negation:
+
+```go
+//go:build !((linux && (amd64 || arm64 || riscv64)) || (darwin && (amd64 || arm64)))
+```
+
+Linux/riscv64 already has `_SIGALRM`, `_ITIMER_REAL`, `itimerval`, and
+`runtime·setitimer` definitions, so the watchdog should compile once the build
+tag admits the platform.
+
+## 6. Cgo Considerations
+
+Linux/riscv64 uses `src/runtime/cgo/gcc_linux.c`, not an arch-specific
+`gcc_linux_riscv64.c`. That generic file calls `_cgo_set_stacklo` during
+`x_cgo_init`, so the assembly reset after `_cgo_init` is required for the same
+reason it is required on amd64 and arm64.
+
+The initial riscv64 implementation should support the same cgo subset as the
+current onethread targets:
+
+- outbound Go-to-C calls run on the sole OS thread;
+- synchronous C-to-Go callbacks on that same thread are allowed;
+- callbacks from foreign C-created threads are rejected through the existing
+  `needm`/extra-M onethread throws;
+- cgo calls that block also block the whole runtime.
+
+Add no new cgo policy for riscv64 unless testing exposes an architecture
+specific issue.
+
+## 7. Tests
+
+Extend the existing opt-in runtime tests:
+
+- Update `mustSupportOnethread` in `src/runtime/onethread_test.go` to include
+  `linux/riscv64`.
+- Keep the environment gate `GO_TEST_ONETHREAD=1`.
+- Keep `TestOnethreadSmoke` expecting:
+
+```text
+1 1 1
+```
+
+- Keep `TestOnethreadCgoMalloc` enabled when cgo is available.
+
+Add riscv64-specific coverage only if a bug appears. The first pass should
+avoid duplicating generic behavior already covered by the onethread smoke and
+cgo tests.
+
+Manual validation commands after building the Pont toolchain. Run these from
+`src/` on a linux/riscv64 host or under riscv64 Linux emulation:
+
+```sh
+../bin/go test runtime -run TestOnethread -count=1
+GO_TEST_ONETHREAD=1 ../bin/go test runtime -run TestOnethread -count=1
+GO_TEST_ONETHREAD=1 CGO_ENABLED=1 ../bin/go test runtime -run TestOnethreadCgoMalloc -count=1
+```
+
+Also build and run a minimal binary with `-onethread` and check that it reports
+one CPU and one P:
+
+```sh
+../bin/go run -onethread ./path/to/smoke.go
+```
+
+For an actual cross-host run, use a riscv64 rootfs/QEMU setup that can execute
+the produced binary. Compile-only success is not enough for this change because
+the core risk is early process-entry assembly.
+
+## 8. Verification Beyond Smoke
+
+Use these checks before considering the port complete:
+
+1. `go run -onethread` works for a pure-Go linux/riscv64 program.
+2. `runtime.NumCPU()` and `runtime.GOMAXPROCS(0)` both report 1.
+3. `runtime.GOMAXPROCS(8)` returns 1 and leaves the value at 1.
+4. A simple cgo program using `C.malloc` and `C.free` works with
+   `CGO_ENABLED=1`.
+5. `GODEBUG=onethreadwatchdog=10` compiles and does not fail during a normal
+   quick-running program.
+6. A deliberate call path that would require a new M still fails loudly with an
+   existing onethread invariant error, rather than silently cloning a thread.
+
+Where possible, inspect the running process with platform tools to confirm
+there is only one task/thread after runtime startup. This is a sanity check on
+the invariant, not a replacement for the runtime tests.
+
+## 9. Risks and Notes
+
+- The highest-risk code is `runtime·rt0_go` in `asm_riscv64.s`; mistakes there
+  can fail before normal Go diagnostics are available.
+- The `g0` stack reset after `_cgo_init` is easy to omit, but it is required to
+  keep `onethreadCheckCStack` meaningful and to keep cgo running on the
+  Pont-owned stack.
+- RISC-V assembly uses `X2` as the stack pointer and `g` as the Go goroutine
+  register. Avoid borrowing `g` as a temporary while setting stack bounds.
+- Do not enable `-onethread` for `freebsd/riscv64` or `openbsd/riscv64`; their
+  entry files exist, but this plan covers linux only.
+- Compile-only cross tests can catch build tags and assembler syntax, but they
+  cannot prove the startup stack and cgo transitions work. Run at least the
+  pure-Go smoke binary under linux/riscv64 before landing.
+
+## 10. Suggested Landing Order
+
+1. Patch `asm_riscv64.s` with the Pont-owned stack constants, startup stack
+   switch, cgo-path stack reset, and backing `GLOBL`.
+2. Patch `cmd/go` platform gating with explicit supported platform pairs.
+3. Patch `onethread_watchdog_timer.go` and the stub build tag.
+4. Patch `onethread_test.go` to run on linux/riscv64.
+5. Build the toolchain for linux/riscv64 and fix any assembler or build-tag
+   errors.
+6. Run the opt-in runtime smoke tests on linux/riscv64 or under a riscv64 Linux
+   emulator.
+7. Run the cgo smoke test if a riscv64 C toolchain is available.

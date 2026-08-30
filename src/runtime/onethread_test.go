@@ -67,13 +67,9 @@ func mustSupportOnethread(t *testing.T) {
 		t.Skip("skipping -onethread integration test; set GO_TEST_ONETHREAD=1 to enable")
 	}
 	testenv.MustHaveGoBuild(t)
-	switch runtime.GOOS {
-	case "darwin", "linux":
-	default:
-		t.Skipf("-onethread is not supported on %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
-	switch runtime.GOARCH {
-	case "amd64", "arm64":
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "linux/amd64", "linux/arm64", "linux/riscv64",
+		"darwin/amd64", "darwin/arm64":
 	default:
 		t.Skipf("-onethread is not supported on %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
