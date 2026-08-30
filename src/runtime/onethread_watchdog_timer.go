@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build (linux || darwin) && (amd64 || arm64)
+//go:build (linux && (amd64 || arm64 || riscv64)) || (darwin && (amd64 || arm64))
 
 package runtime
 

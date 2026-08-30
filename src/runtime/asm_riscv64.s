@@ -7,6 +7,10 @@
 #include "textflag.h"
 #include "cgo/abi_riscv64.h"
 
+#ifdef GOEXPERIMENT_onethread
+#define ONETHREAD_STACK_SIZE 1114112
+#define ONETHREAD_USABLE_STACK 1048576
+#endif
 
 // When building with -buildmode=c-shared, this symbol is called when the shared
 // library is loaded.
@@ -46,6 +50,9 @@ GLOBL _rt0_riscv64_lib_argv<>(SB),NOPTR, $8
 // func rt0_go()
 TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// X2 = stack; A0 = argc; A1 = argv
+#ifdef GOEXPERIMENT_onethread
+	MOV	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), X2
+#endif
 	SUB	$24, X2
 	MOV	A0, 8(X2)	// argc
 	MOV	A1, 16(X2)	// argv
@@ -53,7 +60,11 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
 	MOV	$runtime·g0(SB), g
+#ifdef GOEXPERIMENT_onethread
+	MOV	$(-ONETHREAD_USABLE_STACK), T0
+#else
 	MOV	$(-64*1024), T0
+#endif
 	ADD	T0, X2, T1
 	MOV	T1, g_stackguard0(g)
 	MOV	T1, g_stackguard1(g)
@@ -69,6 +80,14 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	MOV	$setg_gcc<>(SB), A1	// arg 1: setg
 	MOV	g, A0			// arg 0: G
 	JALR	RA, T2
+
+#ifdef GOEXPERIMENT_onethread
+	MOV	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), T1
+	MOV	T1, (g_stack+stack_hi)(g)
+	MOV	$(-ONETHREAD_USABLE_STACK), T0
+	ADD	T0, T1, T1
+	MOV	T1, (g_stack+stack_lo)(g)
+#endif
 
 nocgo:
 	// update stackguard after _cgo_init
@@ -950,3 +969,7 @@ TEXT runtime·panicBounds<ABIInternal>(SB),NOSPLIT,$144-0
 
 DATA	runtime·mainPC+0(SB)/8,$runtime·main<ABIInternal>(SB)
 GLOBL	runtime·mainPC(SB),RODATA,$8
+
+#ifdef GOEXPERIMENT_onethread
+GLOBL	onethreadStack<>(SB),NOPTR,$ONETHREAD_STACK_SIZE
+#endif

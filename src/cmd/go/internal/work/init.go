@@ -131,13 +131,9 @@ func onethreadInit() {
 		return
 	}
 
-	switch cfg.Goos {
-	case "darwin", "linux":
-	default:
-		base.Fatalf("go: -onethread is not supported on %s/%s", cfg.Goos, cfg.Goarch)
-	}
-	switch cfg.Goarch {
-	case "amd64", "arm64":
+	switch cfg.Goos + "/" + cfg.Goarch {
+	case "linux/amd64", "linux/arm64", "linux/riscv64",
+		"darwin/amd64", "darwin/arm64":
 	default:
 		base.Fatalf("go: -onethread is not supported on %s/%s", cfg.Goos, cfg.Goarch)
 	}
