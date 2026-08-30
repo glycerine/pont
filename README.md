@@ -280,11 +280,7 @@ for more deterministic execution.
 
 The GOMAXPROCS=1 requests the use of a single thread
 for user goroutines to try and avoid non-determinism
-from OS thread scheduling. Pont does not presently
-prevent the runtime from creating the traditional Go
-background thread pool, but our aim (hope) is that they
-will not be used during DST that makes no system
-calls for network or file IO.
+from OS thread scheduling.
 
 The -onethread flag to Go causes the entire Go runtime
 to run on only a single thread. This eliminates a
