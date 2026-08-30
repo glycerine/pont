@@ -273,7 +273,7 @@ that were needed.](https://www.polarsignals.com/blog/posts/2024/05/28/mostly-dst
 Pont, however, is not limited to WASM. Pont
 works on any architecture/OS that the standard Go
 gc compiler supports. The -onethread flag is
-currently only supported on Linux.
+currently supported on Linux and Darwin.
 
 The GODEBUG=asyncpreemptoff=1 turns off goroutine pre-emption
 for more deterministic execution.
