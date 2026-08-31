@@ -286,7 +286,13 @@ The -onethread flag to Go causes the entire Go runtime
 to run on only a single thread. This eliminates a
 major source of non-determinism: the OS thread switching
 schedule. Combined with testing/synctest and the
-above env var settings, DST becomes viable.
+above env var settings, DST becomes viable. The
+trade-off is that network code like tailscale won't work 
+correctly because, for instance, tailscale expects to be able to park a
+thread on the netmon route socket and thus that hangs the
+whole process. Since -onethread is meant for hermit DST
+determinism, simply don't use -onethread for binaries
+that need true networking.
 
 # Pont: the new rules for channels
 
