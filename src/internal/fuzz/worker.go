@@ -489,10 +489,15 @@ func RunFuzzWorker(ctx context.Context, fn func(CorpusEntry) error) error {
 	srv := &workerServer{
 		workerComm: comm,
 		fuzzFn: func(e CorpusEntry) (time.Duration, error) {
-			timer := time.AfterFunc(10*time.Second, func() {
-				panic("deadlocked!") // this error message won't be printed
-			})
-			defer timer.Stop()
+			// jea: commenting out this panic. It is not reasonable
+			// and induces massive spurious red fuzz failures
+			// when tests take more than 10 seconds. See my comment
+			// https://github.com/golang/go/issues/56238#issuecomment-4057433432
+			// bad idea:
+			//timer := time.AfterFunc(10*time.Second, func() {
+			//panic("deadlocked!") // this error message won't be printed
+			//})
+			//defer timer.Stop()
 			start := time.Now()
 			err := fn(e)
 			return time.Since(start), err
