@@ -178,3 +178,4 @@ pkg testing, method (*F) ArtifactDir() string #71287
 pkg testing, method (*T) ArtifactDir() string #71287
 pkg testing, type TB interface, ArtifactDir() string #71287
 pkg testing/cryptotest, func SetGlobalRandom(*testing.T, uint64) #70942
+pkg testing/synctest, func Bgid() uint64 #67434

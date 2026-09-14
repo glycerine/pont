@@ -330,3 +330,13 @@ func Sleep(d time.Duration) {
 	time.Sleep(d)
 	Wait()
 }
+
+// Bgid returns a uint64 integer representing the
+// "bubble goroutine id" which is the order of creation
+// of a goroutine inside a bubble. The root
+// goroutine of the bubble is Bgid() == 0.
+// Bgid supports deterministic simulations.
+// Bgid must not be called from outside a bubble.
+func Bgid() uint64 {
+	return synctest.Bgid()
+}
