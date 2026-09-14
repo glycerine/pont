@@ -12,15 +12,24 @@ fi
 # jea: to solve the build failures that complain:
 #         error obtaining VCS status: exit status 128
 #         Use -buildvcs=false to disable VCS stamping.
-export GOTMPDIR="$(cd "$(dirname "$0")/.." && pwd)/go-tmp"
-mkdir -p "$GOTMPDIR"
+#
+# you must run all.bash after setting TMPDIR (in the shell where
+# you are about to run ./all.bash) to a directory that
+# does not cross filesystem boundaries (with respect to GOROOT)
+# so git stays happy.
+# Also, this TMPDIR must not be inside GOROOT as shown by "go env".
+#
+# cd go/src # the directory where all.bash resides.
+# export TMPDIR="$(cd ../.. && pwd)/go-tmp" ## must not be inside GOROOT
+# mkdir -p "$TMPDIR"
+# echo "set TMPDIR to $TMPDIR"
+# ./all.bash
+
 # Keep build/test scratch dirs on the same filesystem as the repo.
 # Without this, t.TempDir() can land on a different mount (e.g. /tmp),
 # and git's upward directory walk hits a filesystem boundary, producing
 # "error obtaining VCS status: exit status 128" in tests that shell out
 # to git from a temp build dir (see cmd/cgo/internal/testerrors/ptr_test.go).
-export GOTMPDIR="$(cd "$(dirname "$0")/.." && pwd)/go-tmp"
-mkdir -p "$GOTMPDIR"
 
 . ./make.bash "$@" --no-banner
 bash run.bash --no-rebuild
