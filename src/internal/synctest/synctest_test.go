@@ -83,6 +83,38 @@ func TestGoroutineWait(t *testing.T) {
 	})
 }
 
+func TestBgid(t *testing.T) {
+	for i := range 2 {
+		var got [5]uint64
+		synctest.Run(func() {
+			createNested := make(chan struct{})
+			release := make(chan struct{})
+			got[0] = synctest.Bgid()
+			go func() {
+				got[1] = synctest.Bgid()
+				<-createNested
+				go func() {
+					got[3] = synctest.Bgid()
+					<-release
+				}()
+				<-release
+			}()
+			go func() {
+				got[2] = synctest.Bgid()
+				<-release
+			}()
+			close(createNested)
+			synctest.Wait()
+			got[4] = synctest.Bgid()
+			close(release)
+		})
+		want := [5]uint64{0, 1, 2, 3, 0}
+		if got != want {
+			t.Fatalf("run %d: Bgid() = %v, want %v", i, got, want)
+		}
+	}
+}
+
 // TestWait starts a collection of goroutines.
 // It checks that synctest.Wait waits for all goroutines to exit before returning.
 func TestWait(t *testing.T) {

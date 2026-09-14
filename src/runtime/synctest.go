@@ -15,12 +15,13 @@ type synctestBubble struct {
 	mu      mutex
 	timers  timers
 	id      uint64 // unique id
-	now     int64  // current fake time
-	root    *g     // caller of synctest.Run
-	waiter  *g     // caller of synctest.Wait
-	main    *g     // goroutine started by synctest.Run
-	waiting bool   // true if a goroutine is calling synctest.Wait
-	done    bool   // true if main has exited
+	nextg   atomic.Uint64
+	now     int64 // current fake time
+	root    *g    // caller of synctest.Run
+	waiter  *g    // caller of synctest.Wait
+	main    *g    // goroutine started by synctest.Run
+	waiting bool  // true if a goroutine is calling synctest.Wait
+	done    bool  // true if main has exited
 
 	// The bubble is active (not blocked) so long as running > 0 || active > 0.
 	//
@@ -165,6 +166,10 @@ func (bubble *synctestBubble) raceaddr() unsafe.Pointer {
 	return unsafe.Pointer(bubble)
 }
 
+func (bubble *synctestBubble) newbgid() uint64 {
+	return bubble.nextg.Add(1) - 1
+}
+
 var bubbleGen atomic.Uint64 // bubble ID counter
 
 //go:linkname synctestRun internal/synctest.Run
@@ -177,6 +182,7 @@ func synctestRun(f func()) {
 	if gp.bubble != nil {
 		panic("synctest.Run called from within a synctest bubble")
 	}
+	oldBgid := gp.bgid
 	bubble := &synctestBubble{
 		id:      bubbleGen.Add(1),
 		total:   1,
@@ -189,8 +195,10 @@ func synctestRun(f func()) {
 	lockInit(&bubble.timers.mu, lockRankTimers)
 
 	gp.bubble = bubble
+	gp.bgid = 0
 	defer func() {
 		gp.bubble = nil
+		gp.bgid = oldBgid
 	}()
 
 	// This is newproc, but also records the new g in bubble.main.
@@ -329,6 +337,15 @@ func synctest_isInBubble() bool {
 	return getg().bubble != nil
 }
 
+//go:linkname synctest_bgid internal/synctest.bgid
+func synctest_bgid() uint64 {
+	gp := getg()
+	if gp.bubble == nil {
+		panic("goroutine is not in a bubble")
+	}
+	return gp.bgid
+}
+
 //go:linkname synctest_acquire internal/synctest.acquire
 func synctest_acquire() any {
 	if bubble := getg().bubble; bubble != nil {
@@ -349,9 +366,13 @@ func synctest_inBubble(bubble any, f func()) {
 	if gp.bubble != nil {
 		panic("goroutine is already bubbled")
 	}
-	gp.bubble = bubble.(*synctestBubble)
+	oldBgid := gp.bgid
+	b := bubble.(*synctestBubble)
+	gp.bubble = b
+	gp.bgid = b.newbgid()
 	defer func() {
 		gp.bubble = nil
+		gp.bgid = oldBgid
 	}()
 	f()
 }

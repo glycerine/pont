@@ -1,1 +1,2 @@
 pkg runtime, func InSimulationMode() bool #67434
+pkg testing/synctest, func Bgid() uint64  #67434

@@ -4645,6 +4645,7 @@ func gdestroy(gp *g) {
 	gp.labels = nil
 	gp.timer = nil
 	gp.bubble = nil
+	gp.bgid = 0
 	gp.fipsOnlyBypass = false
 	gp.secret = 0
 
@@ -5485,7 +5486,13 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr, parked bool, waitreaso
 		sched.ngsys.Add(1)
 	} else {
 		// Only user goroutines inherit synctest groups and pprof labels.
-		newg.bubble = callergp.bubble
+		if bubble := callergp.bubble; bubble != nil {
+			newg.bubble = bubble
+			newg.bgid = bubble.newbgid()
+		} else {
+			newg.bubble = nil
+			newg.bgid = 0
+		}
 		if mp.curg != nil {
 			newg.labels = mp.curg.labels
 		}

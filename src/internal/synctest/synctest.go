@@ -68,6 +68,9 @@ func release(any)
 //go:linkname inBubble
 func inBubble(any, func())
 
+//go:linkname bgid
+func bgid() uint64
+
 // A Bubble is a synctest bubble.
 //
 // Not a public API. Used by syscall/js to propagate bubble membership through syscalls.
@@ -102,4 +105,14 @@ func (b *Bubble) Run(f func()) {
 	} else {
 		inBubble(b.b, f)
 	}
+}
+
+// Bgid returns a uint64 integer representing the
+// "bubble goroutine id" which is the order of creation
+// of a goroutine inside a bubble. The root
+// goroutine of the bubble is Bgid() == 0.
+// Bgid supports deterministic simulations.
+// Bgid must not be called from outside a bubble.
+func Bgid() uint64 {
+	return bgid()
 }
