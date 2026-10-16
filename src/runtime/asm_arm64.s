@@ -111,7 +111,9 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// SP = stack; R0 = argc; R1 = argv
 
 #ifdef GOEXPERIMENT_onethread
-	MOVD	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), RSP
+	// Materialize the address in a general-purpose register before setting SP.
+	MOVD	$onethreadStack<>+ONETHREAD_STACK_SIZE(SB), R7
+	MOVD	R7, RSP
 #endif
 	SUB	$32, RSP
 	MOVW	R0, 8(RSP) // argc
