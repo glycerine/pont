@@ -4,6 +4,8 @@
 
 // Package rand implements a cryptographically secure
 // random number generator.
+// In Pont simulation mode, random bytes are deterministic and are not
+// cryptographically secure.
 package rand
 
 import (
@@ -20,6 +22,7 @@ import (
 
 // Reader is a global, shared instance of a cryptographically
 // secure random number generator. It is safe for concurrent use.
+// In Pont simulation mode, it uses the runtime's deterministic global generator.
 //
 //   - On Linux, FreeBSD, Dragonfly, and Solaris, Reader uses getrandom(2).
 //   - On legacy Linux (< 3.17), Reader opens /dev/urandom on first use.
@@ -40,6 +43,8 @@ func fatal(string)
 
 // Read fills b with cryptographically secure random bytes. It never returns an
 // error, and always fills b entirely.
+// In Pont simulation mode, the default Reader supplies deterministic bytes
+// that replay when runtime.ResetDsimSeed resets the seed.
 //
 // Read calls [io.ReadFull] on [Reader] and crashes the program irrecoverably if
 // an error is returned. The default Reader uses operating system APIs that are
@@ -50,7 +55,9 @@ func Read(b []byte) (n int, err error) {
 	// case which we can keep non-escaping, and in the general case we read into
 	// a heap buffer and copy from it.
 	if rand.IsDefaultReader(Reader) {
-		if boring.Enabled {
+		if rand.ReadSimulation(b) {
+			return len(b), nil
+		} else if boring.Enabled {
 			_, err = io.ReadFull(boring.RandReader, b)
 		} else {
 			drbg.Read(b)
