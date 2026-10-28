@@ -475,8 +475,8 @@ func (check *Checker) stmt(ctxt stmtContext, s ast.Stmt) {
 	case *ast.SendStmtFinal:
 		var ch, val operand
 		check.expr(nil, &ch, s.Chan)
-		check.expr(nil, &val, s.Value)
-		if ch.mode == invalid || val.mode == invalid {
+		check.genericExpr(&val, s.Value, nil)
+		if !ch.isValid() || !val.isValid() {
 			return
 		}
 		if elem := check.chanElem(inNode(s, s.Arrow), &ch, false); elem != nil {
@@ -486,8 +486,8 @@ func (check *Checker) stmt(ctxt stmtContext, s ast.Stmt) {
 	case *ast.SendStmtSticky:
 		var ch, val operand
 		check.expr(nil, &ch, s.Chan)
-		check.expr(nil, &val, s.Value)
-		if ch.mode == invalid || val.mode == invalid {
+		check.genericExpr(&val, s.Value, nil)
+		if !ch.isValid() || !val.isValid() {
 			return
 		}
 		if elem := check.chanElem(inNode(s, s.Arrow), &ch, false); elem != nil {

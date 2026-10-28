@@ -373,7 +373,6 @@ func cheaprand64() int64 {
 // cheaprandu64 must not be exported to other packages:
 // the rule is that other packages using runtime-provided
 // randomness must always use rand.
-//
 func cheaprandu64() uint64 {
 	if simulationMode {
 		return rand()
@@ -477,7 +476,7 @@ func ResetDsimSeed(n uint64) {
 	//mp := getg().m
 	//mp.chacha8.Init(seed)
 	//mp.cheaprand = uint32(r0)
-		mp.cheaprand64 = r0
+	//mp.cheaprand64 = r0
 
 	// all the other m too
 	for mp := allm; mp != nil; mp = mp.alllink {
