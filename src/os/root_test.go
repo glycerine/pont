@@ -1496,6 +1496,16 @@ func TestRootConsistencyRemoveAll(t *testing.T) {
 	}
 }
 
+// rootConsistencyFileInfo compares metadata from separately created trees.
+// Directory sizes are filesystem-dependent and can differ even for directories
+// with identical contents. Keep size checks for files and symlinks.
+func rootConsistencyFileInfo(fi os.FileInfo) string {
+	if fi.IsDir() {
+		return fmt.Sprintf("name:%q mode:%v isdir:true", fi.Name(), fi.Mode())
+	}
+	return fmt.Sprintf("name:%q size:%v mode:%v isdir:false", fi.Name(), fi.Size(), fi.Mode())
+}
+
 func TestRootConsistencyStat(t *testing.T) {
 	for _, test := range rootConsistencyTestCases {
 		test.run(t, func(t *testing.T, path string, r *os.Root) (string, error) {
@@ -1509,7 +1519,7 @@ func TestRootConsistencyStat(t *testing.T) {
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("name:%q size:%v mode:%v isdir:%v", fi.Name(), fi.Size(), fi.Mode(), fi.IsDir()), nil
+			return rootConsistencyFileInfo(fi), nil
 		})
 	}
 }
@@ -1527,7 +1537,7 @@ func TestRootConsistencyLstat(t *testing.T) {
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("name:%q size:%v mode:%v isdir:%v", fi.Name(), fi.Size(), fi.Mode(), fi.IsDir()), nil
+			return rootConsistencyFileInfo(fi), nil
 		})
 	}
 }
@@ -1627,7 +1637,7 @@ func testRootConsistencyMove(t *testing.T, rename bool) {
 						t.Errorf("stat(%q) after successful copy: %v", dstPath, err)
 						return "stat error", err
 					}
-					return fmt.Sprintf("name:%q size:%v mode:%v isdir:%v", fi.Name(), fi.Size(), fi.Mode(), fi.IsDir()), nil
+					return rootConsistencyFileInfo(fi), nil
 				})
 			}
 		})
