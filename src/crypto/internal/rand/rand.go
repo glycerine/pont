@@ -20,6 +20,9 @@ type defaultReader = drbg.DefaultReader
 type reader struct{ defaultReader }
 
 func (r reader) Read(b []byte) (n int, err error) {
+	if ReadSimulation(b) {
+		return len(b), nil
+	}
 	if boring.Enabled {
 		if _, err := boring.RandReader.Read(b); err != nil {
 			panic("crypto/rand: boring RandReader failed: " + err.Error())
@@ -36,6 +39,14 @@ func (r reader) Read(b []byte) (n int, err error) {
 // latter can be set by applications outside of tests. These applications then
 // risk breaking between Go releases, if the way the Reader is used changes.
 var Reader io.Reader = reader{}
+
+// ReadSimulation fills b from the runtime's shared deterministic generator and
+// returns true in simulation mode. Otherwise it leaves b untouched and returns
+// false. The implementation is provided by runtime via go:linkname.
+//
+//go:noescape
+//go:linkname ReadSimulation
+func ReadSimulation(b []byte) bool
 
 // SetTestingReader overrides all calls to [drbg.Read]. The Read method of
 // r must never return an error or return short.

@@ -182,6 +182,31 @@ func bootstrapRand() uint64 {
 	}
 }
 
+// cryptoRandRead supplies deterministic bytes from the shared simulation state.
+// Holding the lock for the whole read also makes this safe for concurrent callers.
+//
+//go:linkname cryptoRandRead crypto/internal/rand.ReadSimulation
+func cryptoRandRead(b []byte) bool {
+	if !simulationMode {
+		return false
+	}
+	lock(&globalRand.lock)
+	for len(b) > 0 {
+		x, ok := globalRand.state.Next()
+		if !ok {
+			globalRand.state.Refill()
+			continue
+		}
+		n := min(len(b), 8)
+		for i := 0; i < n; i++ {
+			b[i] = byte(x >> (8 * i))
+		}
+		b = b[n:]
+	}
+	unlock(&globalRand.lock)
+	return true
+}
+
 // bootstrapRandReseed reseeds the bootstrap random number generator,
 // clearing from memory any trace of previously returned random numbers.
 func bootstrapRandReseed() {

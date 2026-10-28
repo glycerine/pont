@@ -37,3 +37,34 @@ func TestDsimSeedEarlyEnvNoAlloc(t *testing.T) {
 		t.Fatalf("%v failed: %v\n%s", cmd, err, out)
 	}
 }
+
+func TestDsimCryptoRand(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	switch runtime.GOOS {
+	case "aix", "darwin", "ios", "dragonfly", "freebsd", "netbsd", "openbsd", "illumos", "solaris", "linux":
+	default:
+		t.Skip("GO_DSIM_SEED is not read early on this platform")
+	}
+	exe := filepath.Join(t.TempDir(), "dsimrand")
+	cmd := testenv.CleanCmdEnv(testenv.Command(t, testenv.GoToolPath(t), "build", "-o", exe, "./testdata/dsimrand"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	run := func(seed string) string {
+		t.Helper()
+		cmd := testenv.CleanCmdEnv(testenv.Command(t, exe))
+		cmd.Env = append(cmd.Env, "GO_DSIM_SEED="+seed, "GOMAXPROCS=1", "GODEBUG=asyncpreemptoff=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("seed %s: %v\n%s", seed, err, out)
+		}
+		return string(out)
+	}
+	first := run("123")
+	if first != run("123") {
+		t.Fatal("same startup seed did not replay crypto/rand output")
+	}
+	if first == run("456") {
+		t.Fatal("different startup seeds produced identical crypto/rand output")
+	}
+}
